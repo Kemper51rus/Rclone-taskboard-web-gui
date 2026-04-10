@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from pathlib import Path
 import threading
 from typing import Any
 
@@ -273,6 +274,21 @@ class LoggingSettings:
 
 
 @dataclass(frozen=True)
+class WatcherSettings:
+    enabled: bool = False
+    debounce_seconds: int = 45
+
+    def normalized(self) -> WatcherSettings:
+        return WatcherSettings(
+            enabled=bool(self.enabled),
+            debounce_seconds=max(1, int(self.debounce_seconds or 1)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self.normalized())
+
+
+@dataclass(frozen=True)
 class CloudSettings:
     key: str
     title: str
@@ -359,6 +375,7 @@ class JobDefinition:
     options: BackupOptions = field(default_factory=BackupOptions)
     retention: RetentionSettings = field(default_factory=RetentionSettings)
     notifications: JobNotificationSettings = field(default_factory=JobNotificationSettings)
+    watcher_enabled: bool = False
 
     def validate(self) -> JobDefinition:
         raw_key = self.key.strip()
@@ -374,6 +391,7 @@ class JobDefinition:
         options = self.options.normalized()
         retention = self.retention.normalized()
         notifications = self.notifications.normalized()
+        watcher_enabled = bool(self.watcher_enabled) and kind == "backup" and bool(source_path)
         description = self.description.strip() or raw_key
         title = (self.title or "").strip() or description
         if kind != "backup" or transfer_mode == "sync":
@@ -405,6 +423,7 @@ class JobDefinition:
             options=options,
             retention=retention,
             notifications=notifications,
+            watcher_enabled=watcher_enabled,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -469,6 +488,7 @@ class JobCatalog:
         queues: QueueSettings | None = None,
         bandwidth: BandwidthSettings | None = None,
         logging: LoggingSettings | None = None,
+        watcher: WatcherSettings | None = None,
         clouds: list[CloudSettings] | None = None,
     ) -> None:
         self._lock = threading.RLock()
@@ -480,6 +500,7 @@ class JobCatalog:
         self.queues = (queues or QueueSettings()).normalized()
         self.bandwidth = (bandwidth or BandwidthSettings()).normalized()
         self.logging = (logging or LoggingSettings()).normalized()
+        self.watcher = (watcher or WatcherSettings()).normalized()
         self.replace(
             jobs=jobs,
             profiles=profiles,
@@ -487,6 +508,7 @@ class JobCatalog:
             queues=queues,
             bandwidth=bandwidth,
             logging=logging,
+            watcher=watcher,
             clouds=clouds,
         )
 
@@ -498,6 +520,7 @@ class JobCatalog:
         queues: QueueSettings | None = None,
         bandwidth: BandwidthSettings | None = None,
         logging: LoggingSettings | None = None,
+        watcher: WatcherSettings | None = None,
         clouds: list[CloudSettings] | None = None,
     ) -> None:
         normalized_jobs = {job.key: job.validate() for job in jobs}
@@ -521,6 +544,7 @@ class JobCatalog:
             self.queues = (queues or self.queues).normalized()
             self.bandwidth = (bandwidth or self.bandwidth).normalized()
             self.logging = (logging or self.logging).normalized()
+            self.watcher = (watcher or self.watcher).normalized()
 
     def list_jobs(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -600,6 +624,31 @@ def normalize_bwlimit(limit: str | None) -> str | None:
     if not raw_limit or raw_limit.lower() in DISABLED_BWLIMIT_VALUES:
         return None
     return raw_limit
+
+
+def normalize_local_path(path: str | None) -> str | None:
+    raw_path = str(path or "").strip()
+    if not raw_path:
+        return None
+    candidate = Path(raw_path).expanduser()
+    try:
+        normalized = candidate.resolve(strict=False)
+    except OSError:
+        normalized = candidate.absolute()
+    value = normalized.as_posix()
+    if value != "/":
+        value = value.rstrip("/")
+    return value
+
+
+def path_is_within(root_path: str | None, target_path: str | None) -> bool:
+    normalized_root = normalize_local_path(root_path)
+    normalized_target = normalize_local_path(target_path)
+    if not normalized_root or not normalized_target:
+        return False
+    if normalized_target == normalized_root:
+        return True
+    return normalized_target.startswith(f"{normalized_root}/")
 
 
 def apply_rclone_bwlimit(command: list[str], limit: str | None) -> list[str]:

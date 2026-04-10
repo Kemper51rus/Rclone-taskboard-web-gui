@@ -1,5 +1,5 @@
 [Unit]
-Description=Rclone Hybrid Web API (queue + scheduler)
+Description=Rclone Hybrid Web API (queue + scheduler + watcher)
 After=network-online.target
 Wants=network-online.target
 

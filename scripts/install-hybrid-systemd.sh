@@ -25,18 +25,15 @@ require_cmd systemctl
 
 warn_missing_runtime rclone
 warn_missing_runtime curl
-warn_missing_runtime inotifywait
 
 install -d "$TARGET_ROOT" "$TARGET_ROOT/hybrid" "$TARGET_ROOT/hybrid/backend" "$TARGET_ROOT/hybrid/backend/app" \
-  "$TARGET_ROOT/hybrid/data" "$TARGET_ROOT/scripts" "$TARGET_ROOT/systemd"
+  "$TARGET_ROOT/hybrid/data" "$TARGET_ROOT/systemd"
 
 cp -a "$REPO_ROOT/hybrid/backend/app/." "$TARGET_ROOT/hybrid/backend/app/"
 find "$TARGET_ROOT/hybrid/backend/app" \( -type d -name __pycache__ -o -type f -name '*.pyc' \) -exec rm -rf {} +
 install -m 0644 "$REPO_ROOT/hybrid/backend/requirements.txt" "$TARGET_ROOT/hybrid/backend/requirements.txt"
 install -m 0644 "$REPO_ROOT/hybrid/backend/app/jobs/default_jobs.example.json" "$TARGET_ROOT/hybrid/backend/app/jobs/default_jobs.example.json"
-install -m 0755 "$REPO_ROOT/scripts/rclone-watch-hybrid.sh" "$TARGET_ROOT/scripts/rclone-watch-hybrid.sh"
 install -m 0644 "$REPO_ROOT/systemd/rclone-hybrid-web.service" "$TARGET_ROOT/systemd/rclone-hybrid-web.service"
-install -m 0644 "$REPO_ROOT/systemd/rclone-watch-hybrid.service" "$TARGET_ROOT/systemd/rclone-watch-hybrid.service"
 install -m 0644 "$REPO_ROOT/hybrid/.env.systemd.example" "$TARGET_ROOT/hybrid/.env.systemd.example"
 
 if [[ ! -f "$TARGET_ROOT/hybrid/.env" ]]; then
@@ -54,7 +51,6 @@ fi
 "$TARGET_ROOT/hybrid/.venv/bin/pip" install -r "$TARGET_ROOT/hybrid/backend/requirements.txt"
 
 install -m 0644 "$REPO_ROOT/systemd/rclone-hybrid-web.service" "$SYSTEMD_DIR/rclone-hybrid-web.service"
-install -m 0644 "$REPO_ROOT/systemd/rclone-watch-hybrid.service" "$SYSTEMD_DIR/rclone-watch-hybrid.service"
 systemctl daemon-reload
 
 cat <<EOF
@@ -63,5 +59,4 @@ systemd deployment bundle installed into: $TARGET_ROOT
 Next steps:
   1. Review and edit $TARGET_ROOT/hybrid/.env
   2. systemctl enable --now rclone-hybrid-web.service
-  3. systemctl enable --now rclone-watch-hybrid.service
 EOF

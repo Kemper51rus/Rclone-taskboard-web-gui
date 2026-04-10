@@ -21,19 +21,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-
-  hybrid-watch:
-    build:
-      context: ..
-      dockerfile: hybrid/backend/Dockerfile
-    container_name: rclone-hybrid-watch
-    restart: unless-stopped
-    env_file:
-      - ./.env.docker
-    depends_on:
-      hybrid-web:
-        condition: service_healthy
-    command: ["/usr/local/bin/rclone-watch-hybrid.sh"]
-    volumes:
-      - /media:/media
-      - /srv:/srv

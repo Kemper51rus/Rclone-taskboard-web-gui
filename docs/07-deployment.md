@@ -9,10 +9,9 @@
 
 ## 🐳 Docker Deployment
 
-В Docker-режиме запускаются два сервиса:
+В Docker-режиме запускается один сервис:
 
 - `hybrid-web`
-- `hybrid-watch`
 
 ### Требования
 
@@ -51,7 +50,7 @@ docker compose --env-file .env.docker up -d --build
 
 ## 🖥️ Systemd Deployment
 
-В режиме `systemd` web-сервис и watcher запускаются напрямую на хосте.
+В режиме `systemd` backend, scheduler и watcher работают внутри одного web-сервиса.
 
 ### Требования
 
@@ -59,7 +58,6 @@ docker compose --env-file .env.docker up -d --build
 - `python3-venv`
 - `rclone`
 - `curl`
-- `inotifywait`
 - `systemd`
 
 ### Подготовка
@@ -73,7 +71,7 @@ cp hybrid/.env.systemd.example hybrid/.env
 - `HYBRID_DB_PATH`
 - `HYBRID_JOBS_FILE`
 - `HYBRID_RCLONE_CONFIG`
-- `HYBRID_API_URL`
+- `HYBRID_WATCHER_DEBOUNCE_SECONDS`
 
 ### Установка
 
@@ -85,7 +83,6 @@ cp hybrid/.env.systemd.example hybrid/.env
 
 ```bash
 systemctl enable --now rclone-hybrid-web.service
-systemctl enable --now rclone-watch-hybrid.service
 ```
 
 ---

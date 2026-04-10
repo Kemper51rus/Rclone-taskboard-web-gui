@@ -41,7 +41,7 @@ backend/app/jobs/default_jobs.example.json
 - `HYBRID_JOBS_FILE`
 - `HYBRID_RCLONE_CONFIG`
 - `HYBRID_API_TOKEN`
-- `HYBRID_API_URL`
+- `HYBRID_WATCHER_DEBOUNCE_SECONDS`
 - `HYBRID_ENABLE_SCHEDULER`
 - `HYBRID_STANDARD_INTERVAL_MINUTES`
 - `HYBRID_HEAVY_HOUR`
@@ -58,6 +58,7 @@ backend/app/jobs/default_jobs.example.json
 - `GET /api/queues`
 - `GET /api/bandwidth`
 - `GET /api/logging`
+- `GET /api/watcher`
 - `GET /api/logging/rclone-tail`
 - `GET /api/clouds`
 - `GET /api/fs/browse`
@@ -67,6 +68,7 @@ backend/app/jobs/default_jobs.example.json
 - `PUT /api/queues`
 - `PUT /api/bandwidth`
 - `PUT /api/logging`
+- `PUT /api/watcher`
 - `DELETE /api/logging/rclone-log`
 - `POST /api/runs`
 - `POST /api/runs/job/{job_key}`

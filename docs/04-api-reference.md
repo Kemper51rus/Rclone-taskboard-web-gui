@@ -2,7 +2,7 @@
 
 Документ описывает текущее API приложения по состоянию исходного кода `hybrid/backend/app/main.py`.
 
-Если задан `HYBRID_API_TOKEN`, все операции записи требуют токен. Эндпоинты чтения работают без него.
+`HYBRID_API_TOKEN` используется как токен для операций записи во внешних интеграциях и deployment-сценариях.
 
 ---
 
@@ -20,7 +20,7 @@
 | --- | --- | --- |
 | `GET` | `/api/health` | Проверка доступности сервиса |
 | `GET` | `/api/state` | Общее состояние, очереди, workers, последние запуски и флаг `token_required` |
-| `GET` | `/api/jobs` | Полный рабочий каталог: профили, очереди, Gotify, bandwidth, logging, clouds и jobs |
+| `GET` | `/api/jobs` | Полный рабочий каталог: профили, очереди, Gotify, bandwidth, logging, watcher, clouds и jobs |
 
 ---
 
@@ -37,6 +37,8 @@
 | `PUT` | `/api/bandwidth` | Сохранить глобальный лимит скорости |
 | `GET` | `/api/logging` | Получить настройки `rclone`-логирования |
 | `PUT` | `/api/logging` | Включить или отключить `rclone`-логирование |
+| `GET` | `/api/watcher` | Получить настройки и runtime-статус watcher |
+| `PUT` | `/api/watcher` | Включить или отключить watcher и изменить debounce |
 
 ### Форматы настроек
 
@@ -44,6 +46,7 @@
 - `PUT /api/queues`: `allow_parallel_profiles`, `allow_scheduler_queueing`, `allow_event_queueing`, `definitions`
 - `PUT /api/bandwidth`: `limit`
 - `PUT /api/logging`: `rclone_log_enabled`
+- `PUT /api/watcher`: `enabled`, `debounce_seconds`
 
 ---
 
@@ -128,7 +131,7 @@ Cloud settings в текущей версии считаются read-only и б
 
 | Method | Endpoint | Назначение |
 | --- | --- | --- |
-| `POST` | `/api/triggers/event` | Принять событие от watcher и, если нужно, поставить профиль в очередь |
+| `POST` | `/api/triggers/event` | Принять событие watcher и запустить совпавшие backup-задачи |
 
 ### Формат запроса
 
@@ -147,6 +150,7 @@ Cloud settings в текущей версии считаются read-only и б
 - `GET /api/queues`
 - `GET /api/bandwidth`
 - `GET /api/logging`
+- `GET /api/watcher`
 - `GET /api/logging/rclone-tail`
 - `DELETE /api/logging/rclone-log`
 - `GET /api/clouds`
@@ -156,6 +160,7 @@ Cloud settings в текущей версии считаются read-only и б
 - `POST /api/run-steps/{step_id}/control`
 - `PUT /api/bandwidth`
 - `PUT /api/logging`
+- `PUT /api/watcher`
 - `PUT /api/jobs`
 
 Cloud endpoints для записи также были задокументированы неточно: они существуют, но в текущей версии намеренно возвращают `403`.

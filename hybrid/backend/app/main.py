@@ -25,12 +25,14 @@ from .domain import (
     QueueSettings,
     RetentionSettings,
     ScheduleDefinition,
+    WatcherSettings,
 )
 from .gotify import GotifyClient
 from .jobs_loader import build_profiles, load_catalog, save_catalog
 from .orchestrator import Orchestrator
 from .runner import CommandRunner
 from .storage import Storage
+from .watcher import FilesystemWatcher
 
 
 settings: Settings = load_settings()
@@ -38,6 +40,7 @@ catalog = load_catalog(
     settings.jobs_file,
     standard_interval_minutes=settings.standard_interval_minutes,
     heavy_hour=settings.heavy_hour,
+    watcher_debounce_seconds=settings.watcher_debounce_seconds,
 )
 catalog_lock = threading.RLock()
 storage = Storage(settings.db_path)
@@ -53,6 +56,10 @@ orchestrator = Orchestrator(
     runner=runner,
     gotify=gotify,
 )
+event_watcher = FilesystemWatcher(
+    catalog=catalog,
+    on_event=orchestrator.enqueue_event,
+)
 DASHBOARD_HTML = Path(__file__).with_name("dashboard.html").read_text(encoding="utf-8")
 FS_ROOTS = ["/media", "/srv", "/home", "/root", "/mnt", "/tmp"]
 
@@ -62,9 +69,11 @@ async def lifespan(_: FastAPI):
     storage.initialize()
     storage.recover_incomplete_runs()
     orchestrator.start()
+    event_watcher.start()
     try:
         yield
     finally:
+        event_watcher.stop()
         orchestrator.stop()
 
 
@@ -152,6 +161,7 @@ class BackupJobPayload(BaseModel):
     options: BackupOptionsPayload = Field(default_factory=BackupOptionsPayload)
     retention: RetentionPayload = Field(default_factory=RetentionPayload)
     notifications: JobNotificationPayload = Field(default_factory=JobNotificationPayload)
+    watcher_enabled: bool = False
     order: int = 10
 
 
@@ -174,6 +184,7 @@ class JobPayload(BaseModel):
     options: BackupOptionsPayload = Field(default_factory=BackupOptionsPayload)
     retention: RetentionPayload = Field(default_factory=RetentionPayload)
     notifications: JobNotificationPayload = Field(default_factory=JobNotificationPayload)
+    watcher_enabled: bool = False
     order: int = 10
 
 
@@ -213,6 +224,11 @@ class BandwidthPayload(BaseModel):
 
 class LoggingPayload(BaseModel):
     rclone_log_enabled: bool = False
+
+
+class WatcherPayload(BaseModel):
+    enabled: bool = False
+    debounce_seconds: int = 45
 
 
 def _slug_cloud_key(value: str) -> str:
@@ -341,6 +357,7 @@ def _refresh_catalog_clouds_from_rclone() -> list[CloudSettings]:
         current_profiles = catalog.profiles
         current_gotify = catalog.gotify
         current_queues = catalog.queues
+        current_watcher = catalog.watcher
         current_clouds = catalog.raw_clouds()
         try:
             refreshed_clouds = _import_clouds_from_rclone_config(
@@ -359,6 +376,7 @@ def _refresh_catalog_clouds_from_rclone() -> list[CloudSettings]:
             queues=current_queues,
             bandwidth=catalog.bandwidth,
             logging=catalog.logging,
+            watcher=current_watcher,
             clouds=refreshed_clouds,
         )
         return catalog.raw_clouds()
@@ -384,6 +402,7 @@ def state() -> dict[str, Any]:
     snapshot["token_required"] = bool(settings.api_token)
     snapshot["latest_runs"] = storage.list_runs(limit=15)
     snapshot["backup_jobs"] = catalog.list_backup_jobs()
+    snapshot["watcher"] = event_watcher.snapshot()
     return snapshot
 
 
@@ -396,6 +415,7 @@ def jobs() -> dict[str, Any]:
         "queues": catalog.queues.to_dict(),
         "bandwidth": catalog.bandwidth.to_dict(),
         "logging": catalog.logging.to_dict(),
+        "watcher": catalog.watcher.to_dict(),
         "clouds": [cloud.to_dict() for cloud in clouds],
         "jobs": catalog.list_jobs(),
         "backup_jobs": catalog.list_backup_jobs(),
@@ -421,6 +441,14 @@ def get_bandwidth_settings() -> dict[str, Any]:
 @app.get("/api/logging")
 def get_logging_settings() -> dict[str, Any]:
     return {"logging": catalog.logging.to_dict()}
+
+
+@app.get("/api/watcher")
+def get_watcher_settings() -> dict[str, Any]:
+    return {
+        "watcher": catalog.watcher.to_dict(),
+        "runtime": event_watcher.snapshot(),
+    }
 
 
 @app.get("/api/logging/rclone-tail")
@@ -488,6 +516,7 @@ def update_gotify_settings(payload: GotifyPayload) -> dict[str, Any]:
             queues=catalog.queues,
             bandwidth=catalog.bandwidth,
             logging=catalog.logging,
+            watcher=catalog.watcher,
             clouds=catalog.raw_clouds(),
         )
         save_catalog(settings.jobs_file, updated_catalog)
@@ -498,6 +527,7 @@ def update_gotify_settings(payload: GotifyPayload) -> dict[str, Any]:
             queues=updated_catalog.queues,
             bandwidth=updated_catalog.bandwidth,
             logging=updated_catalog.logging,
+            watcher=updated_catalog.watcher,
             clouds=updated_catalog.raw_clouds(),
         )
     return {"saved": True, "gotify": catalog.gotify.to_dict()}
@@ -535,6 +565,7 @@ def update_queue_settings(payload: QueueSettingsPayload) -> dict[str, Any]:
             queues=queues,
             bandwidth=catalog.bandwidth,
             logging=catalog.logging,
+            watcher=catalog.watcher,
             clouds=catalog.raw_clouds(),
         )
         save_catalog(settings.jobs_file, updated_catalog)
@@ -545,6 +576,7 @@ def update_queue_settings(payload: QueueSettingsPayload) -> dict[str, Any]:
             queues=updated_catalog.queues,
             bandwidth=updated_catalog.bandwidth,
             logging=updated_catalog.logging,
+            watcher=updated_catalog.watcher,
             clouds=updated_catalog.raw_clouds(),
         )
         orchestrator.sync_workers_from_catalog()
@@ -562,6 +594,7 @@ def update_bandwidth_settings(payload: BandwidthPayload) -> dict[str, Any]:
             queues=catalog.queues,
             bandwidth=bandwidth,
             logging=catalog.logging,
+            watcher=catalog.watcher,
             clouds=catalog.raw_clouds(),
         )
         save_catalog(settings.jobs_file, updated_catalog)
@@ -572,6 +605,7 @@ def update_bandwidth_settings(payload: BandwidthPayload) -> dict[str, Any]:
             queues=updated_catalog.queues,
             bandwidth=updated_catalog.bandwidth,
             logging=updated_catalog.logging,
+            watcher=updated_catalog.watcher,
             clouds=updated_catalog.raw_clouds(),
         )
     return {"saved": True, "bandwidth": catalog.bandwidth.to_dict()}
@@ -588,6 +622,7 @@ def update_logging_settings(payload: LoggingPayload) -> dict[str, Any]:
             queues=catalog.queues,
             bandwidth=catalog.bandwidth,
             logging=logging_settings,
+            watcher=catalog.watcher,
             clouds=catalog.raw_clouds(),
         )
         save_catalog(settings.jobs_file, updated_catalog)
@@ -598,9 +633,43 @@ def update_logging_settings(payload: LoggingPayload) -> dict[str, Any]:
             queues=updated_catalog.queues,
             bandwidth=updated_catalog.bandwidth,
             logging=updated_catalog.logging,
+            watcher=updated_catalog.watcher,
             clouds=updated_catalog.raw_clouds(),
         )
     return {"saved": True, "logging": catalog.logging.to_dict()}
+
+
+@app.put("/api/watcher", dependencies=[Depends(require_write_access)])
+def update_watcher_settings(payload: WatcherPayload) -> dict[str, Any]:
+    watcher_settings = WatcherSettings(**payload.model_dump()).normalized()
+    with catalog_lock:
+        updated_catalog = JobCatalog(
+            jobs=catalog.raw_jobs(),
+            profiles=build_profiles(catalog.raw_jobs(), queue_keys=catalog.queues.queue_keys()),
+            gotify=catalog.gotify,
+            queues=catalog.queues,
+            bandwidth=catalog.bandwidth,
+            logging=catalog.logging,
+            watcher=watcher_settings,
+            clouds=catalog.raw_clouds(),
+        )
+        save_catalog(settings.jobs_file, updated_catalog)
+        catalog.replace(
+            updated_catalog.raw_jobs(),
+            updated_catalog.profiles,
+            gotify=updated_catalog.gotify,
+            queues=updated_catalog.queues,
+            bandwidth=updated_catalog.bandwidth,
+            logging=updated_catalog.logging,
+            watcher=updated_catalog.watcher,
+            clouds=updated_catalog.raw_clouds(),
+        )
+        event_watcher.sync_from_catalog()
+    return {
+        "saved": True,
+        "watcher": catalog.watcher.to_dict(),
+        "runtime": event_watcher.snapshot(),
+    }
 
 
 @app.put("/api/clouds", dependencies=[Depends(require_write_access)])
@@ -694,6 +763,7 @@ def update_backups(payload: BackupCatalogPayload) -> dict[str, Any]:
                 options=BackupOptions(**item.options.model_dump()),
                 retention=RetentionSettings(**item.retention.model_dump()),
                 notifications=JobNotificationSettings(**item.notifications.model_dump()),
+                watcher_enabled=item.watcher_enabled,
             ).validate()
         )
 
@@ -707,6 +777,7 @@ def update_backups(payload: BackupCatalogPayload) -> dict[str, Any]:
             queues=catalog.queues,
             bandwidth=catalog.bandwidth,
             logging=catalog.logging,
+            watcher=catalog.watcher,
             clouds=catalog.raw_clouds(),
         )
         save_catalog(settings.jobs_file, updated_catalog)
@@ -717,8 +788,10 @@ def update_backups(payload: BackupCatalogPayload) -> dict[str, Any]:
             queues=updated_catalog.queues,
             bandwidth=updated_catalog.bandwidth,
             logging=updated_catalog.logging,
+            watcher=updated_catalog.watcher,
             clouds=updated_catalog.raw_clouds(),
         )
+        event_watcher.sync_from_catalog()
 
     return {
         "saved": True,
@@ -728,6 +801,7 @@ def update_backups(payload: BackupCatalogPayload) -> dict[str, Any]:
         "queues": catalog.queues.to_dict(),
         "bandwidth": catalog.bandwidth.to_dict(),
         "logging": catalog.logging.to_dict(),
+        "watcher": catalog.watcher.to_dict(),
         "clouds": catalog.list_clouds(),
     }
 
@@ -784,6 +858,7 @@ def update_jobs(payload: JobCatalogPayload) -> dict[str, Any]:
                     transfer_mode=item.transfer_mode,
                     options=BackupOptions(**item.options.model_dump()),
                     retention=RetentionSettings(**item.retention.model_dump()),
+                    watcher_enabled=item.watcher_enabled,
                 ).validate()
             )
 
@@ -795,6 +870,7 @@ def update_jobs(payload: JobCatalogPayload) -> dict[str, Any]:
             queues=catalog.queues,
             bandwidth=catalog.bandwidth,
             logging=catalog.logging,
+            watcher=catalog.watcher,
             clouds=catalog.raw_clouds(),
         )
         save_catalog(settings.jobs_file, updated_catalog)
@@ -805,8 +881,10 @@ def update_jobs(payload: JobCatalogPayload) -> dict[str, Any]:
             queues=updated_catalog.queues,
             bandwidth=updated_catalog.bandwidth,
             logging=updated_catalog.logging,
+            watcher=updated_catalog.watcher,
             clouds=updated_catalog.raw_clouds(),
         )
+        event_watcher.sync_from_catalog()
 
     return {
         "saved": True,
@@ -818,6 +896,7 @@ def update_jobs(payload: JobCatalogPayload) -> dict[str, Any]:
         "queues": catalog.queues.to_dict(),
         "bandwidth": catalog.bandwidth.to_dict(),
         "logging": catalog.logging.to_dict(),
+        "watcher": catalog.watcher.to_dict(),
         "clouds": catalog.list_clouds(),
     }
 

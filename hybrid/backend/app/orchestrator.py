@@ -10,7 +10,14 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .config import Settings
-from .domain import JobCatalog, JobDefinition, RunStepDefinition, apply_rclone_bwlimit, effective_bwlimit
+from .domain import (
+    JobCatalog,
+    JobDefinition,
+    RunStepDefinition,
+    apply_rclone_bwlimit,
+    effective_bwlimit,
+    path_is_within,
+)
 from .gotify import GotifyClient
 from .runner import CommandRunner
 from .storage import Storage
@@ -185,39 +192,90 @@ class Orchestrator:
 
     def enqueue_event(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.storage.append_event("filesystem", payload)
+        event_path = str(payload.get("path") or "").strip() or None
+        matched_jobs = self._matching_watcher_jobs(payload)
 
-        now = datetime.now(timezone.utc)
-        last_ts_raw = self.storage.get_state("event_last_enqueued_at")
-        if last_ts_raw:
-            try:
-                last_ts = datetime.fromisoformat(last_ts_raw)
-                elapsed = (now - last_ts).total_seconds()
-                if elapsed < self.settings.event_debounce_seconds:
-                    return {
-                        "accepted": False,
-                        "reason": "debounced",
-                        "retry_after_seconds": int(self.settings.event_debounce_seconds - elapsed),
-                    }
-            except ValueError:
-                pass
-
-        if self._event_enqueue_blocked():
+        if not self.catalog.watcher.enabled:
             return {
                 "accepted": False,
-                "reason": "standard_run_in_progress",
+                "reason": "watcher_disabled",
+                "matched_jobs": [],
+                "job_results": [],
             }
 
-        run_id = self.enqueue_run(
-            profile="standard",
-            trigger_type="event",
-            source="watcher",
-            requested_by="watcher",
-            metadata=payload,
-        )
-        self.storage.set_state("event_last_enqueued_at", now.isoformat())
+        if not matched_jobs:
+            return {
+                "accepted": False,
+                "reason": "no_matching_jobs",
+                "matched_jobs": [],
+                "job_results": [],
+            }
+
+        now = datetime.now(timezone.utc)
+        debounce_seconds = self.catalog.watcher.debounce_seconds
+        run_ids: list[int] = []
+        job_results: list[dict[str, Any]] = []
+
+        for job in matched_jobs:
+            state_key = f"watcher_last_enqueued_at:{job.key}"
+            last_ts_raw = self.storage.get_state(state_key)
+            if last_ts_raw:
+                try:
+                    last_ts = datetime.fromisoformat(last_ts_raw)
+                    elapsed = (now - last_ts).total_seconds()
+                    if elapsed < debounce_seconds:
+                        job_results.append(
+                            {
+                                "job_key": job.key,
+                                "accepted": False,
+                                "reason": "debounced",
+                                "retry_after_seconds": int(debounce_seconds - elapsed),
+                            }
+                        )
+                        continue
+                except ValueError:
+                    pass
+
+            if self._event_enqueue_blocked(job.profile):
+                job_results.append(
+                    {
+                        "job_key": job.key,
+                        "accepted": False,
+                        "reason": "queue_busy",
+                        "profile": job.profile,
+                    }
+                )
+                continue
+
+            run_id = self.enqueue_job(
+                job_key=job.key,
+                trigger_type="event",
+                source="watcher",
+                requested_by="watcher",
+                metadata={
+                    **payload,
+                    "matched_job_key": job.key,
+                    "watch_path": event_path,
+                },
+            )
+            self.storage.set_state(state_key, now.isoformat())
+            self.storage.set_state("event_last_enqueued_at", now.isoformat())
+            run_ids.append(run_id)
+            job_results.append(
+                {
+                    "job_key": job.key,
+                    "accepted": True,
+                    "profile": job.profile,
+                    "run_id": run_id,
+                }
+            )
+
         return {
-            "accepted": True,
-            "run_id": run_id,
+            "accepted": bool(run_ids),
+            "run_ids": run_ids,
+            "matched_jobs": [job.key for job in matched_jobs],
+            "job_results": job_results,
+            "reason": None if run_ids else "no_jobs_enqueued",
         }
 
     def control_run_step(self, step_id: int, action: str) -> dict[str, Any]:
@@ -305,10 +363,26 @@ class Orchestrator:
             return False
         return self._queue_busy(profile)
 
-    def _event_enqueue_blocked(self) -> bool:
+    def _event_enqueue_blocked(self, profile: str) -> bool:
         if self.catalog.queues.allow_event_queueing:
             return False
-        return self._queue_busy("standard")
+        return self._queue_busy(profile)
+
+    def _matching_watcher_jobs(self, payload: dict[str, Any]) -> list[JobDefinition]:
+        details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+        candidate_paths = [
+            str(payload.get("path") or "").strip() or None,
+            str(details.get("src_path") or "").strip() or None,
+            str(details.get("dest_path") or "").strip() or None,
+        ]
+        matched: list[JobDefinition] = []
+        for job in self.catalog.raw_jobs():
+            if job.kind != "backup" or not job.enabled or not job.watcher_enabled or not job.source_path:
+                continue
+            if any(path_is_within(job.source_path, candidate) for candidate in candidate_paths if candidate):
+                matched.append(job)
+        matched.sort(key=lambda item: (item.order, item.key))
+        return matched
 
     def _worker_loop(self, queue_name: str, run_queue: queue.Queue[int | None]) -> None:
         while not self._stop_event.is_set():

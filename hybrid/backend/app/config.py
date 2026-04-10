@@ -22,6 +22,18 @@ def _read_int(name: str, default: int) -> int:
         return default
 
 
+def _read_int_any(names: list[str], default: int) -> int:
+    for name in names:
+        raw = os.getenv(name)
+        if raw is None:
+            continue
+        try:
+            return int(raw)
+        except ValueError:
+            continue
+    return default
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str
@@ -33,7 +45,7 @@ class Settings:
     enable_scheduler: bool
     standard_interval_minutes: int
     heavy_hour: int
-    event_debounce_seconds: int
+    watcher_debounce_seconds: int
     default_timeout_seconds: int
     output_tail_chars: int
     dry_run: bool
@@ -72,7 +84,10 @@ def load_settings() -> Settings:
         enable_scheduler=_read_bool("HYBRID_ENABLE_SCHEDULER", True),
         standard_interval_minutes=standard_interval,
         heavy_hour=heavy_hour,
-        event_debounce_seconds=max(1, _read_int("HYBRID_EVENT_DEBOUNCE_SECONDS", 45)),
+        watcher_debounce_seconds=max(
+            1,
+            _read_int_any(["HYBRID_WATCHER_DEBOUNCE_SECONDS", "HYBRID_EVENT_DEBOUNCE_SECONDS"], 45),
+        ),
         default_timeout_seconds=max(1, _read_int("HYBRID_DEFAULT_TIMEOUT_SECONDS", 3600)),
         output_tail_chars=max(512, _read_int("HYBRID_OUTPUT_TAIL_CHARS", 8000)),
         dry_run=_read_bool("HYBRID_DRY_RUN", False),

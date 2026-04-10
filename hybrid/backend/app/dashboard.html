@@ -982,6 +982,7 @@
         <button id="cloudsToggle" onclick="toggleClouds()">Облака</button>
         <button id="queuesToggle" onclick="toggleQueues()">Очереди</button>
         <button id="loggingToggle" onclick="toggleLogging()">Логи</button>
+        <button id="watcherToggle" onclick="toggleWatcher()">Watcher</button>
         <button id="gotifyToggle" onclick="toggleGotify()">Gotify</button>
       </div>
     </section>
@@ -1110,6 +1111,10 @@
                 <input id="jobSource" placeholder="/media/photo/library/" />
                 <button type="button" class="secondary" onclick="openBrowser('source')">Выбрать</button>
               </div>
+            </div>
+            <div class="field full" data-job-kind="backup">
+              <button type="button" class="toggle-chip" id="jobWatcherEnabled" aria-pressed="false">Следить watcher за исходным каталогом этой задачи</button>
+              <div class="field-meta">При изменениях в исходном каталоге backend watcher сможет запускать именно эту backup-задачу.</div>
             </div>
 	            <div class="field full" data-job-kind="backup">
 	              <label for="jobCloud">Облако</label>
@@ -1276,6 +1281,47 @@
 
         </section>
 
+        <section class="panel" id="loggingPanel" hidden>
+          <div class="token-card" style="padding:0; border:none; background:none;">
+            <div>
+              <div class="eyebrow">Rclone лог</div>
+              <div class="row" style="align-items:center; gap:10px; flex-wrap:nowrap; width:max-content;">
+                <button type="button" class="toggle-chip" id="rcloneLogEnabled" aria-pressed="false" style="white-space:nowrap;">Писать лог</button>
+                <button type="button" class="secondary" onclick="clearRcloneLogs()" style="white-space:nowrap;">Очистить лог</button>
+              </div>
+            </div>
+            <small>Когда выключено, прогресс берётся из stdout/stderr процесса без `--log-file`. Когда включено, для новых запусков создаются отдельные логи по шагам в `hybrid/backend/data/rclone-logs`.</small>
+            <div class="row" style="margin-top:14px; align-items:center; gap:10px; flex-wrap:nowrap; width:max-content;">
+              <label for="rcloneLogTailLines" style="margin:0;">Строк лога</label>
+              <div class="row" style="align-items:center; gap:10px; flex-wrap:nowrap;">
+                <input id="rcloneLogTailLines" type="number" min="1" max="2000" step="1" value="1" inputmode="numeric" style="width:96px;" />
+                <button class="secondary" onclick="showLatestRcloneLog()">Показать</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" id="watcherPanel" hidden>
+          <div class="token-card" style="padding:0; border:none; background:none;">
+            <div>
+              <div class="eyebrow">Watcher</div>
+              <div class="row" style="align-items:center; gap:10px; flex-wrap:wrap;">
+                <button type="button" class="toggle-chip" id="watcherEnabled" aria-pressed="false">Включить watcher</button>
+                <div class="row" style="align-items:center; gap:10px; flex-wrap:nowrap;">
+                  <label for="watcherDebounceSeconds" style="margin:0;">Debounce, сек</label>
+                  <input id="watcherDebounceSeconds" type="number" min="1" max="3600" value="45" inputmode="numeric" style="width:110px;" />
+                </div>
+              </div>
+            </div>
+            <small>Watcher работает внутри backend и следит только за теми backup-задачами, у которых включено наблюдение за исходным каталогом.</small>
+            <div class="field-meta" id="watcherRuntimeSummary" style="margin-top:8px;"></div>
+            <div class="clouds-list" id="watcherJobsList" style="margin-top:14px;"></div>
+          </div>
+          <div class="editor-actions">
+            <button onclick="saveWatcherSettings()">Сохранить Watcher</button>
+          </div>
+        </section>
+
         <section class="panel" id="gotifyPanel" hidden>
           <div class="token-card" style="padding:0; border:none; background:none;">
             <div>
@@ -1299,26 +1345,6 @@
           <div class="editor-actions">
             <button onclick="saveGotifySettings()">Сохранить Gotify</button>
             <button class="secondary" onclick="testGotifySettings()">Проверить</button>
-          </div>
-        </section>
-
-        <section class="panel" id="loggingPanel" hidden>
-          <div class="token-card" style="padding:0; border:none; background:none;">
-            <div>
-              <div class="eyebrow">Rclone лог</div>
-              <div class="row" style="align-items:center; gap:10px; flex-wrap:nowrap; width:max-content;">
-                <button type="button" class="toggle-chip" id="rcloneLogEnabled" aria-pressed="false" style="white-space:nowrap;">Писать лог</button>
-                <button type="button" class="secondary" onclick="clearRcloneLogs()" style="white-space:nowrap;">Очистить лог</button>
-              </div>
-            </div>
-            <small>Когда выключено, прогресс берётся из stdout/stderr процесса без `--log-file`. Когда включено, для новых запусков создаются отдельные логи по шагам в `hybrid/backend/data/rclone-logs`.</small>
-            <div class="row" style="margin-top:14px; align-items:center; gap:10px; flex-wrap:nowrap; width:max-content;">
-              <label for="rcloneLogTailLines" style="margin:0;">Строк лога</label>
-              <div class="row" style="align-items:center; gap:10px; flex-wrap:nowrap;">
-                <input id="rcloneLogTailLines" type="number" min="1" max="2000" step="1" value="1" inputmode="numeric" style="width:96px;" />
-                <button class="secondary" onclick="showLatestRcloneLog()">Показать</button>
-              </div>
-            </div>
           </div>
         </section>
 
@@ -1364,11 +1390,14 @@
       queues: { allow_parallel_profiles: false, allow_scheduler_queueing: false, allow_event_queueing: false, definitions: [] },
       bandwidth: { limit: null },
       logging: { rclone_log_enabled: false },
+      watcher: { enabled: false, debounce_seconds: 45 },
+      watcherRuntime: { component_running: false, observer_running: false, configured_jobs: 0, active_jobs: 0, jobs: [], active_paths: [] },
       selectedQueueKey: null,
       showClouds: false,
       showGotify: false,
       showQueues: false,
       showLogging: false,
+      showWatcher: false,
       creatingNewJob: false,
       editingKey: null,
       keyEditedManually: false,
@@ -1681,7 +1710,7 @@
       const rightSlot = document.getElementById("historySlotRight");
       const runsPanel = document.getElementById("runsPanel");
       const editorHidden = document.getElementById("editorPanel").hidden;
-      const shouldPlaceRight = state.showQueues || (editorHidden && !state.showGotify && !state.showClouds && !state.showLogging);
+      const shouldPlaceRight = state.showQueues || (editorHidden && !state.showGotify && !state.showClouds && !state.showLogging && !state.showWatcher);
       const target = shouldPlaceRight ? rightSlot : leftSlot;
       if (runsPanel.parentElement !== target) {
         target.appendChild(runsPanel);
@@ -2132,14 +2161,90 @@
       updateRunsLayout();
     }
 
+    function watcherEnabledJobs() {
+      return state.jobs
+        .filter((job) => job.kind === "backup" && job.enabled !== false && job.watcher_enabled && job.source_path)
+        .sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+    }
+
+    function renderWatcherPanel() {
+      const panel = document.getElementById("watcherPanel");
+      const toggle = document.getElementById("watcherToggle");
+      const summary = document.getElementById("watcherRuntimeSummary");
+      const jobsList = document.getElementById("watcherJobsList");
+      if (!panel || !toggle || !summary || !jobsList) return;
+
+      panel.hidden = !state.showWatcher;
+      toggle.classList.toggle("is-active", state.showWatcher);
+      setTogglePressed("watcherEnabled", Boolean(state.watcher?.enabled));
+      document.getElementById("watcherDebounceSeconds").value = Number(state.watcher?.debounce_seconds || 45);
+
+      const runtime = state.watcherRuntime || {};
+      const runtimeJobs = Array.isArray(runtime.jobs) ? runtime.jobs : [];
+      const runtimeByJobKey = new Map(runtimeJobs.map((item) => [item.job_key, item]));
+      const fallbackJobs = watcherEnabledJobs().map((job) => ({
+        job_key: job.key,
+        title: job.display_title || job.title || job.description || job.key,
+        profile: job.profile,
+        path: job.source_path,
+        exists: null,
+        active: Boolean(state.watcher?.enabled),
+      }));
+      const mergedJobs = fallbackJobs.map((item) => ({ ...item, ...(runtimeByJobKey.get(item.job_key) || {}) }));
+      const extraRuntimeJobs = runtimeJobs.filter((item) => !mergedJobs.some((entry) => entry.job_key === item.job_key));
+      const items = [...mergedJobs, ...extraRuntimeJobs];
+      const configuredJobs = Number(runtime.configured_jobs ?? items.length);
+      const activeJobs = Number(runtime.active_jobs ?? items.filter((item) => item.active).length);
+      const activePaths = Array.isArray(runtime.active_paths) ? runtime.active_paths.length : new Set(items.filter((item) => item.active).map((item) => item.path)).size;
+      const observerRunning = Boolean(runtime.observer_running);
+      const componentRunning = Boolean(runtime.component_running);
+      const runtimeError = String(runtime.last_error || "").trim();
+
+      summary.textContent = state.watcher?.enabled
+        ? (observerRunning
+          ? `Watcher активен: задач ${activeJobs}/${configuredJobs}, путей ${activePaths}.`
+          : `Watcher включён, но сейчас не наблюдает пути: задач ${activeJobs}/${configuredJobs}, путей ${activePaths}.`)
+        : `Watcher выключен. Подготовлено задач: ${configuredJobs}. Компонент backend ${componentRunning ? "запущен" : "остановлен"}.`;
+      if (runtimeError) {
+        summary.textContent = `${summary.textContent} Ошибка: ${runtimeError}`;
+      }
+
+      if (!items.length) {
+        jobsList.innerHTML = '<div class="empty">Ни у одной backup-задачи пока не включено наблюдение за исходным каталогом.</div>';
+      } else {
+        jobsList.innerHTML = items.map((item) => `
+          <article class="job-card cloud-card ${item.active ? "" : "disabled"}">
+            <div class="job-top">
+              <div>
+                <div class="job-title">${escapeHtml(item.title || item.job_key || "job")}</div>
+                <div class="job-meta">${escapeHtml(item.job_key || "")}</div>
+              </div>
+              <div class="pill ${item.active ? "ok" : "bad"}">${item.active ? "наблюдается" : "неактивно"}</div>
+            </div>
+            <div class="pill-row">
+              <div class="pill">${escapeHtml(item.profile || "standard")}</div>
+              ${item.exists === false ? '<div class="pill pill-retention">путь отсутствует</div>' : ""}
+            </div>
+            <div class="job-meta" style="margin-top:10px;">${escapeHtml(item.path || "")}</div>
+          </article>
+        `).join("");
+      }
+
+      renderHeroStatusIndicators();
+      updateRunsLayout();
+    }
+
     function renderHeroStatusIndicators() {
       const loggingToggle = document.getElementById("loggingToggle");
+      const watcherToggle = document.getElementById("watcherToggle");
       const gotifyToggle = document.getElementById("gotifyToggle");
       const loggingEnabled = Boolean(state.logging?.rclone_log_enabled);
+      const watcherEnabled = Boolean(state.watcher?.enabled);
       const gotifyEnabled = Boolean(state.gotify?.enabled);
       const needsGotifyAttention = loggingEnabled && !gotifyEnabled;
 
       loggingToggle.classList.toggle("has-status-on", loggingEnabled);
+      watcherToggle.classList.toggle("has-status-on", watcherEnabled);
       gotifyToggle.classList.toggle("has-status-on", gotifyEnabled);
       loggingToggle.classList.toggle("has-status-warning", needsGotifyAttention);
       gotifyToggle.classList.toggle("has-status-warning", needsGotifyAttention);
@@ -2147,6 +2252,9 @@
       loggingToggle.title = needsGotifyAttention
         ? "Логи включены, но Gotify выключен."
         : (loggingEnabled ? "Подробный лог rclone включён." : "Подробный лог rclone выключен.");
+      watcherToggle.title = watcherEnabled
+        ? "Встроенный watcher включён."
+        : "Встроенный watcher выключен.";
       gotifyToggle.title = needsGotifyAttention
         ? "Gotify выключен при включённом логировании."
         : (gotifyEnabled ? "Gotify включён." : "Gotify выключен.");
@@ -2267,9 +2375,11 @@
         state.showGotify = false;
         state.showQueues = false;
         state.showLogging = false;
+        state.showWatcher = false;
         renderGotifyPanel();
         renderQueuesPanel();
         renderLoggingPanel();
+        renderWatcherPanel();
       }
       renderCloudsPanel();
     }
@@ -2283,6 +2393,8 @@
         renderQueuesPanel();
         state.showLogging = false;
         renderLoggingPanel();
+        state.showWatcher = false;
+        renderWatcherPanel();
       }
       renderGotifyPanel();
     }
@@ -2296,6 +2408,8 @@
         renderGotifyPanel();
         state.showLogging = false;
         renderLoggingPanel();
+        state.showWatcher = false;
+        renderWatcherPanel();
       }
       renderQueuesPanel();
     }
@@ -2309,8 +2423,25 @@
         renderGotifyPanel();
         state.showQueues = false;
         renderQueuesPanel();
+        state.showWatcher = false;
+        renderWatcherPanel();
       }
       renderLoggingPanel();
+    }
+
+    function toggleWatcher() {
+      state.showWatcher = !state.showWatcher;
+      if (state.showWatcher) {
+        state.showClouds = false;
+        renderCloudsPanel();
+        state.showGotify = false;
+        renderGotifyPanel();
+        state.showQueues = false;
+        renderQueuesPanel();
+        state.showLogging = false;
+        renderLoggingPanel();
+      }
+      renderWatcherPanel();
     }
 
     function escapeHtml(value) {
@@ -2490,7 +2621,8 @@
           on_failure: isTogglePressed("jobNotifyFailure"),
           priority: formValue("jobNotifyPriority") ? Number(formValue("jobNotifyPriority")) : null,
           custom_title: formValue("jobNotifyTitle") || null,
-        }
+        },
+        watcher_enabled: kind === "backup" ? isTogglePressed("jobWatcherEnabled") : false,
       };
       const destinationPreview = document.getElementById("jobDestinationPreview");
       if (destinationPreview) destinationPreview.value = destinationPath || "";
@@ -2517,6 +2649,10 @@
       if (job && state.showLogging) {
         state.showLogging = false;
         renderLoggingPanel();
+      }
+      if (job && state.showWatcher) {
+        state.showWatcher = false;
+        renderWatcherPanel();
       }
       setEditorVisibility(showEditor);
       updateRunsLayout();
@@ -2552,6 +2688,7 @@
       document.getElementById("minAge").value = job?.options?.min_age || "";
       document.getElementById("excludeList").value = (job?.options?.exclude || []).join("\n");
       document.getElementById("extraArgs").value = (job?.options?.extra_args || []).join("\n");
+      setTogglePressed("jobWatcherEnabled", job?.watcher_enabled ?? false);
       setTogglePressed("retentionEnabled", job?.retention?.enabled ?? false);
       document.getElementById("retentionMinAge").value = job?.retention?.min_age || "";
       document.getElementById("retentionExcludeList").value = (job?.retention?.exclude || []).join("\n");
@@ -2582,6 +2719,7 @@
       document.getElementById("scheduleInterval").value = 60;
       document.getElementById("scheduleHour").value = 3;
       document.getElementById("scheduleMinute").value = 0;
+      setTogglePressed("jobWatcherEnabled", false);
       setTogglePressed("retentionEnabled", false);
       document.getElementById("retentionMinAge").value = "";
       document.getElementById("retentionExcludeList").value = "";
@@ -2687,8 +2825,10 @@
         state.queues = payload.queues || state.queues;
         state.bandwidth = payload.bandwidth || state.bandwidth;
         state.logging = payload.logging || state.logging;
+        state.watcher = payload.watcher || state.watcher;
         renderBandwidthControl();
         renderLoggingPanel();
+        renderWatcherPanel();
         renderJobs();
         renderQueuesPanel();
         if (state.editingKey) {
@@ -2696,6 +2836,7 @@
           fillForm(updated || null);
         }
         setToast("Каталог задач сохранен в jobs JSON.", "ok");
+        refreshSnapshot().catch(() => {});
       } catch (error) {
         setToast(error.message || "Ошибка сохранения", "error");
       }
@@ -2815,6 +2956,33 @@
         );
       } catch (error) {
         setToast(error.message || "Ошибка сохранения настроек логирования", "error");
+      }
+    }
+
+    async function saveWatcherSettings() {
+      try {
+        const payload = {
+          enabled: isTogglePressed("watcherEnabled"),
+          debounce_seconds: Number(document.getElementById("watcherDebounceSeconds").value || 45),
+        };
+        const response = await fetch("/api/watcher", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || "save failed");
+        state.watcher = result.watcher || payload;
+        state.watcherRuntime = result.runtime || state.watcherRuntime;
+        renderWatcherPanel();
+        setToast(
+          state.watcher?.enabled
+            ? "Watcher включён. Backend обновил список наблюдаемых путей."
+            : "Watcher выключен.",
+          "ok"
+        );
+      } catch (error) {
+        setToast(error.message || "Ошибка сохранения watcher", "error");
       }
     }
 
@@ -3177,9 +3345,11 @@
     async function refreshSnapshot() {
       const response = await fetch("/api/state");
       const snapshot = await response.json();
+      state.watcherRuntime = snapshot.watcher || state.watcherRuntime;
       renderStatus(snapshot);
       renderCopyProgress(snapshot.copy_progress || [], snapshot.active_operations || []);
       renderRuns(snapshot.latest_runs || []);
+      renderWatcherPanel();
       updateServiceMessage(snapshot);
       return snapshot;
     }
@@ -3198,12 +3368,14 @@
         state.queues = jobsPayload.queues || state.queues;
         state.bandwidth = jobsPayload.bandwidth || state.bandwidth;
         state.logging = jobsPayload.logging || state.logging;
+        state.watcher = jobsPayload.watcher || state.watcher;
         renderJobs();
         renderBandwidthControl();
         renderCloudsPanel();
         renderGotifyPanel();
         renderQueuesPanel();
         renderLoggingPanel();
+        renderWatcherPanel();
         if (!state.editingKey) {
           fillForm(null, { showEditor: state.creatingNewJob });
         } else {
@@ -3234,6 +3406,12 @@
 
     document.getElementById("jobKind").addEventListener("change", () => updateJobKindVisibility());
     document.getElementById("globalBandwidthLimit").addEventListener("change", () => saveBandwidthSettings());
+    document.getElementById("watcherDebounceSeconds").addEventListener("input", (event) => {
+      state.watcher = {
+        ...state.watcher,
+        debounce_seconds: Math.max(1, Number(event.target.value || state.watcher?.debounce_seconds || 45)),
+      };
+    });
 
     document.addEventListener("click", (event) => {
       if (!event.target.closest(".select-shell")) {
@@ -3241,11 +3419,15 @@
       }
     });
 
-    ["retentionEnabled", "jobNotifySuccess", "jobNotifyFailure"].forEach((id) => {
+    ["retentionEnabled", "jobNotifySuccess", "jobNotifyFailure", "jobWatcherEnabled"].forEach((id) => {
       bindToggleChip(id, () => collectFormJob());
     });
 
     bindToggleChip("gotifyEnabled");
+    bindToggleChip("watcherEnabled", (next) => {
+      state.watcher = { ...state.watcher, enabled: next };
+      renderWatcherPanel();
+    });
     bindToggleChip("rcloneLogEnabled", () => saveLoggingSettings());
     ["queuesParallelProfiles", "queuesSchedulerQueueing", "queuesEventQueueing"].forEach((id) => {
       bindToggleChip(id);

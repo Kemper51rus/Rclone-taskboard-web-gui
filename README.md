@@ -27,7 +27,7 @@
 - HTTP API для запуска, просмотра истории и изменения настроек
 - настраиваемые очереди с собственным числом workers и ограничениями скорости
 - встроенный scheduler для периодических запусков
-- запуск по событиям файловой системы через `inotifywait`
+- встроенный watcher для запуска задач по изменениям в файловой системе
 - SQLite для хранения запусков, шагов, событий и служебного состояния
 - редактирование каталога задач через UI и API
 - поддержка развертывания через `docker` и `systemd`
@@ -39,7 +39,7 @@
 
 Проект устроен так:
 
-- приложение принимает команды из UI, scheduler и watcher
+- приложение принимает команды из UI, scheduler и встроенного watcher
 - `rclone` выполняет копирование и синхронизацию
 - очереди распределяют запуск задач по профилям
 - SQLite хранит историю и текущее состояние
@@ -51,7 +51,7 @@
 | FastAPI app | API, dashboard и операции управления |
 | Scheduler | Плановые запуски по расписанию |
 | Workers | Исполнение задач из очередей |
-| Watcher | Отправка событий файловой системы в API |
+| Watcher | Наблюдение за каталогами и запуск задач по событиям |
 | SQLite | История запусков, шагов, событий и состояние scheduler |
 
 ### Поток выполнения
@@ -123,8 +123,7 @@ docker compose --env-file .env.docker up -d --build
 
 #### Что запускается
 
-- `hybrid-web` — API, dashboard, scheduler и workers
-- `hybrid-watch` — watcher, который отправляет события в API
+- `hybrid-web` — API, dashboard, scheduler, workers и встроенный watcher
 
 ### 🖥️ Systemd
 
@@ -136,7 +135,6 @@ docker compose --env-file .env.docker up -d --build
 - `python3-venv`
 - `rclone`
 - `curl`
-- `inotifywait`
 - `systemd`
 
 #### Быстрый старт
@@ -145,7 +143,6 @@ docker compose --env-file .env.docker up -d --build
 cp hybrid/.env.systemd.example hybrid/.env
 ./scripts/install-hybrid-systemd.sh /opt/rclone-hybrid
 systemctl enable --now rclone-hybrid-web.service
-systemctl enable --now rclone-watch-hybrid.service
 ```
 
 ---
@@ -196,6 +193,7 @@ systemctl enable --now rclone-watch-hybrid.service
 - `queues`
 - `bandwidth`
 - `logging`
+- `watcher`
 - `clouds`
 - `jobs`
 
@@ -210,6 +208,8 @@ systemctl enable --now rclone-watch-hybrid.service
 - параметры очередей
 - глобальный лимит скорости
 - включение подробного `rclone`-лога
+- глобальное включение watcher и debounce
+- включение watcher у отдельных backup-задач
 
 ### Поведение при первом запуске
 
@@ -232,12 +232,11 @@ default_jobs.example.json -> default_jobs.json
 | `HYBRID_ENABLE_SCHEDULER` | Включение scheduler |
 | `HYBRID_STANDARD_INTERVAL_MINUTES` | Интервал стандартных задач |
 | `HYBRID_HEAVY_HOUR` | Час запуска heavy-задач |
-| `HYBRID_EVENT_DEBOUNCE_SECONDS` | Окно debounce для watcher |
+| `HYBRID_WATCHER_DEBOUNCE_SECONDS` | Начальное значение debounce для watcher |
 | `HYBRID_DEFAULT_TIMEOUT_SECONDS` | Таймаут команд по умолчанию |
 | `HYBRID_OUTPUT_TAIL_CHARS` | Размер сохраняемого tail вывода |
 | `HYBRID_DRY_RUN` | Dry-run режим |
 | `HYBRID_API_TOKEN` | Токен для операций записи |
-| `HYBRID_API_URL` | URL API для watcher |
 
 ---
 
@@ -264,6 +263,7 @@ default_jobs.example.json -> default_jobs.json
 | `GET` | `/api/queues` | Текущие настройки очередей |
 | `GET` | `/api/bandwidth` | Глобальный лимит скорости |
 | `GET` | `/api/logging` | Настройки подробного логирования |
+| `GET` | `/api/watcher` | Настройки и runtime-статус watcher |
 | `GET` | `/api/logging/rclone-tail` | Хвост последнего `rclone`-лога |
 | `DELETE` | `/api/logging/rclone-log` | Очистка файлов `rclone`-логов |
 | `GET` | `/api/clouds` | Список облаков из `rclone.conf` |
@@ -278,12 +278,13 @@ default_jobs.example.json -> default_jobs.json
 | `PUT` | `/api/queues` | Сохранение настроек очередей |
 | `PUT` | `/api/bandwidth` | Сохранение глобального лимита скорости |
 | `PUT` | `/api/logging` | Включение или отключение `rclone`-логов |
+| `PUT` | `/api/watcher` | Сохранение настроек watcher |
 | `PUT` | `/api/backups` | Обновление только backup-задач |
 | `PUT` | `/api/jobs` | Обновление полного каталога задач |
 | `POST` | `/api/runs` | Запуск профиля |
 | `POST` | `/api/runs/job/{job_key}` | Запуск отдельной задачи |
 | `POST` | `/api/run-steps/{step_id}/control` | Пауза, продолжение или остановка шага |
-| `POST` | `/api/triggers/event` | Приём событий от watcher |
+| `POST` | `/api/triggers/event` | Приём filesystem-события и запуск совпавших watcher-задач |
 | `DELETE` | `/api/runs` | Очистка истории запусков |
 
 ### Read-only и отключённые cloud endpoints

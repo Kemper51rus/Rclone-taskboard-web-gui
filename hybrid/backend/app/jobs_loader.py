@@ -20,6 +20,7 @@ from .domain import (
     QueueSettings,
     RetentionSettings,
     ScheduleDefinition,
+    WatcherSettings,
 )
 
 
@@ -35,6 +36,7 @@ def load_catalog(
     *,
     standard_interval_minutes: int = 1,
     heavy_hour: int = 3,
+    watcher_debounce_seconds: int = 45,
 ) -> JobCatalog:
     if not path.exists():
         _bootstrap_catalog_file(path)
@@ -46,6 +48,7 @@ def load_catalog(
     raw_queues = data.get("queues", {})
     raw_bandwidth = data.get("bandwidth", {})
     raw_logging = data.get("logging", {})
+    raw_watcher = data.get("watcher", {})
     raw_clouds = data.get("clouds", [])
 
     if not isinstance(raw_jobs, list):
@@ -80,6 +83,7 @@ def load_catalog(
     profiles = build_profiles(jobs, queue_keys=queues.queue_keys())
     bandwidth = _load_bandwidth_settings(raw_bandwidth)
     logging = _load_logging_settings(raw_logging)
+    watcher = _load_watcher_settings(raw_watcher, default_debounce_seconds=watcher_debounce_seconds)
     clouds = _load_clouds(raw_clouds)
     catalog = JobCatalog(
         jobs=jobs,
@@ -88,6 +92,7 @@ def load_catalog(
         queues=queues,
         bandwidth=bandwidth,
         logging=logging,
+        watcher=watcher,
         clouds=clouds,
     )
     if migrated:
@@ -116,6 +121,7 @@ def save_catalog(path: Path, catalog: JobCatalog) -> None:
         "queues": catalog.queues.to_dict(),
         "bandwidth": catalog.bandwidth.to_dict(),
         "logging": catalog.logging.to_dict(),
+        "watcher": catalog.watcher.to_dict(),
         # Cloud settings are sourced from rclone.conf at runtime and must not be persisted
         # back into the jobs catalog, otherwise credentials can leak into JSON.
         "clouds": [],
@@ -148,6 +154,7 @@ def job_to_storage_dict(job: JobDefinition) -> dict[str, Any]:
         "profile": normalized.profile,
         "schedule": normalized.schedule.to_dict(),
         "notifications": normalized.notifications.to_dict(),
+        "watcher_enabled": normalized.watcher_enabled,
     }
     if normalized.kind == "backup":
         item["source_path"] = normalized.source_path
@@ -231,6 +238,7 @@ def _load_job(
             options=options,
             retention=_load_retention(raw.get("retention")),
             notifications=_load_notifications(raw.get("notifications")),
+            watcher_enabled=bool(raw.get("watcher_enabled", False)),
         ).validate()
 
     command = raw.get("command")
@@ -357,6 +365,20 @@ def _load_logging_settings(raw: Any) -> LoggingSettings:
         return LoggingSettings()
     return LoggingSettings(
         rclone_log_enabled=bool(raw.get("rclone_log_enabled", False)),
+    ).normalized()
+
+
+def _load_watcher_settings(raw: Any, *, default_debounce_seconds: int) -> WatcherSettings:
+    if isinstance(raw, bool):
+        return WatcherSettings(
+            enabled=raw,
+            debounce_seconds=default_debounce_seconds,
+        ).normalized()
+    if not isinstance(raw, dict):
+        return WatcherSettings(debounce_seconds=default_debounce_seconds).normalized()
+    return WatcherSettings(
+        enabled=bool(raw.get("enabled", False)),
+        debounce_seconds=int(raw.get("debounce_seconds", default_debounce_seconds) or default_debounce_seconds),
     ).normalized()
 
 
