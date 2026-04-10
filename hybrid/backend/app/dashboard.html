@@ -782,6 +782,16 @@
       font-size: 12px;
       line-height: 1.35;
     }
+    .field-meta.field-meta-error {
+      margin-top: 10px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 90, 104, 0.76);
+      background: linear-gradient(180deg, rgba(96, 16, 29, 0.42), rgba(58, 8, 18, 0.34));
+      color: #ffd9de;
+      font-weight: 600;
+      box-shadow: inset 0 0 0 1px rgba(255, 90, 104, 0.14), 0 0 18px rgba(255, 90, 104, 0.12);
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -1317,9 +1327,6 @@
             <div class="field-meta" id="watcherRuntimeSummary" style="margin-top:8px;"></div>
             <div class="clouds-list" id="watcherJobsList" style="margin-top:14px;"></div>
           </div>
-          <div class="editor-actions">
-            <button onclick="saveWatcherSettings()">Сохранить Watcher</button>
-          </div>
         </section>
 
         <section class="panel" id="gotifyPanel" hidden>
@@ -1412,6 +1419,7 @@
     };
 
     const weekdayLabels = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+    let watcherAutoSaveTimer = null;
     const bandwidthPresets = [
       { value: "", label: "Без лимита" },
       { value: "2M", label: "2 MB/s" },
@@ -2208,6 +2216,7 @@
       if (runtimeError) {
         summary.textContent = `${summary.textContent} Ошибка: ${runtimeError}`;
       }
+      summary.classList.toggle("field-meta-error", Boolean(runtimeError));
 
       if (!items.length) {
         jobsList.innerHTML = '<div class="empty">Ни у одной backup-задачи пока не включено наблюдение за исходным каталогом.</div>';
@@ -2242,12 +2251,15 @@
       const watcherEnabled = Boolean(state.watcher?.enabled);
       const gotifyEnabled = Boolean(state.gotify?.enabled);
       const needsGotifyAttention = loggingEnabled && !gotifyEnabled;
+      const gotifyDisabled = !gotifyEnabled;
+      const watcherDisabled = !watcherEnabled;
 
       loggingToggle.classList.toggle("has-status-on", loggingEnabled);
       watcherToggle.classList.toggle("has-status-on", watcherEnabled);
       gotifyToggle.classList.toggle("has-status-on", gotifyEnabled);
       loggingToggle.classList.toggle("has-status-warning", needsGotifyAttention);
-      gotifyToggle.classList.toggle("has-status-warning", needsGotifyAttention);
+      watcherToggle.classList.toggle("has-status-warning", watcherDisabled);
+      gotifyToggle.classList.toggle("has-status-warning", gotifyDisabled);
 
       loggingToggle.title = needsGotifyAttention
         ? "Логи включены, но Gotify выключен."
@@ -2302,6 +2314,14 @@
         return "";
       }
       return normalized;
+    }
+
+    function normalizeWatcherDebounce(value, fallback = 45) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) {
+        return Math.max(1, Number(fallback) || 45);
+      }
+      return Math.max(1, Math.round(parsed));
     }
 
     function applyPreviewBwlimit(args) {
@@ -2360,9 +2380,10 @@
           <div class="pill-row">
             <div class="pill">${job.kind}</div>
             ${job.kind === "backup" ? `<div class="pill">${job.transfer_mode}</div>` : ""}
+            ${job.kind === "backup" && job.watcher_enabled ? `<div class="pill">watcher</div>` : ""}
             ${job.kind === "backup" && job.retention?.enabled && job.retention?.min_age ? `<div class="pill pill-retention">retention ${escapeHtml(job.retention.min_age)}</div>` : ""}
             <div class="pill">${job.profile}</div>
-            <div class="pill">${job.schedule_summary}</div>
+            ${!(job.kind === "backup" && job.watcher_enabled && job.schedule_summary === "manual") ? `<div class="pill">${job.schedule_summary}</div>` : ""}
             <div class="pill">timeout ${job.timeout_seconds}s</div>
           </div>
         </article>
@@ -2959,11 +2980,16 @@
       }
     }
 
-    async function saveWatcherSettings() {
+    async function saveWatcherSettings({ silent = false } = {}) {
       try {
+        const debounceSeconds = normalizeWatcherDebounce(
+          document.getElementById("watcherDebounceSeconds").value,
+          state.watcher?.debounce_seconds || 45
+        );
+        document.getElementById("watcherDebounceSeconds").value = debounceSeconds;
         const payload = {
           enabled: isTogglePressed("watcherEnabled"),
-          debounce_seconds: Number(document.getElementById("watcherDebounceSeconds").value || 45),
+          debounce_seconds: debounceSeconds,
         };
         const response = await fetch("/api/watcher", {
           method: "PUT",
@@ -2975,15 +3001,27 @@
         state.watcher = result.watcher || payload;
         state.watcherRuntime = result.runtime || state.watcherRuntime;
         renderWatcherPanel();
-        setToast(
-          state.watcher?.enabled
-            ? "Watcher включён. Backend обновил список наблюдаемых путей."
-            : "Watcher выключен.",
-          "ok"
-        );
+        if (!silent) {
+          setToast(
+            state.watcher?.enabled
+              ? "Watcher включён. Backend обновил список наблюдаемых путей."
+              : "Watcher выключен.",
+            "ok"
+          );
+        }
       } catch (error) {
         setToast(error.message || "Ошибка сохранения watcher", "error");
       }
+    }
+
+    function scheduleWatcherAutoSave(delayMs = 450) {
+      if (watcherAutoSaveTimer) {
+        clearTimeout(watcherAutoSaveTimer);
+      }
+      watcherAutoSaveTimer = setTimeout(() => {
+        watcherAutoSaveTimer = null;
+        saveWatcherSettings({ silent: true });
+      }, delayMs);
     }
 
     async function showLatestRcloneLog() {
@@ -3407,10 +3445,18 @@
     document.getElementById("jobKind").addEventListener("change", () => updateJobKindVisibility());
     document.getElementById("globalBandwidthLimit").addEventListener("change", () => saveBandwidthSettings());
     document.getElementById("watcherDebounceSeconds").addEventListener("input", (event) => {
+      const nextDebounce = normalizeWatcherDebounce(event.target.value, state.watcher?.debounce_seconds || 45);
       state.watcher = {
         ...state.watcher,
-        debounce_seconds: Math.max(1, Number(event.target.value || state.watcher?.debounce_seconds || 45)),
+        debounce_seconds: nextDebounce,
       };
+      scheduleWatcherAutoSave(500);
+    });
+    document.getElementById("watcherDebounceSeconds").addEventListener("blur", (event) => {
+      const normalized = normalizeWatcherDebounce(event.target.value, state.watcher?.debounce_seconds || 45);
+      event.target.value = normalized;
+      state.watcher = { ...state.watcher, debounce_seconds: normalized };
+      scheduleWatcherAutoSave(0);
     });
 
     document.addEventListener("click", (event) => {
@@ -3427,6 +3473,7 @@
     bindToggleChip("watcherEnabled", (next) => {
       state.watcher = { ...state.watcher, enabled: next };
       renderWatcherPanel();
+      saveWatcherSettings();
     });
     bindToggleChip("rcloneLogEnabled", () => saveLoggingSettings());
     ["queuesParallelProfiles", "queuesSchedulerQueueing", "queuesEventQueueing"].forEach((id) => {
