@@ -253,60 +253,7 @@ default_jobs.example.json -> default_jobs.json
 
 ## 📖 API
 
-Полное описание вынесено в `docs/04-api-reference.md`. Ниже приведён краткий обзор текущего API без сокращений и устаревших endpoints.
-
-### Dashboard и чтение состояния
-
-| Method | Endpoint | Назначение |
-| --- | --- | --- |
-| `GET` | `/` | HTML dashboard |
-| `GET` | `/api/health` | Проверка доступности сервиса |
-| `GET` | `/api/state` | Состояние сервиса, очередей, workers и последних запусков |
-| `GET` | `/api/jobs` | Полный рабочий каталог |
-| `GET` | `/api/runs` | Список запусков |
-| `GET` | `/api/runs/{run_id}` | Детали запуска и шагов |
-
-### Настройки и справочные данные
-
-| Method | Endpoint | Назначение |
-| --- | --- | --- |
-| `GET` | `/api/gotify` | Текущие настройки Gotify |
-| `GET` | `/api/queues` | Текущие настройки очередей |
-| `GET` | `/api/bandwidth` | Глобальный лимит скорости |
-| `GET` | `/api/logging` | Настройки подробного логирования |
-| `GET` | `/api/watcher` | Настройки и runtime-статус watcher |
-| `GET` | `/api/logging/rclone-tail` | Хвост последнего `rclone`-лога |
-| `DELETE` | `/api/logging/rclone-log` | Очистка файлов `rclone`-логов |
-| `GET` | `/api/clouds` | Список облаков из `rclone.conf` |
-| `GET` | `/api/fs/browse` | Просмотр доступных директорий |
-
-### Операции записи
-
-| Method | Endpoint | Назначение |
-| --- | --- | --- |
-| `PUT` | `/api/gotify` | Сохранение настроек Gotify |
-| `POST` | `/api/gotify/test` | Тестовое сообщение Gotify |
-| `PUT` | `/api/queues` | Сохранение настроек очередей |
-| `PUT` | `/api/bandwidth` | Сохранение глобального лимита скорости |
-| `PUT` | `/api/logging` | Включение или отключение `rclone`-логов |
-| `PUT` | `/api/watcher` | Сохранение настроек watcher |
-| `PUT` | `/api/backups` | Обновление только backup-задач |
-| `PUT` | `/api/jobs` | Обновление полного каталога задач |
-| `POST` | `/api/runs` | Запуск профиля |
-| `POST` | `/api/runs/job/{job_key}` | Запуск отдельной задачи |
-| `POST` | `/api/run-steps/{step_id}/control` | Пауза, продолжение или остановка шага |
-| `POST` | `/api/triggers/event` | Приём filesystem-события и запуск совпавших watcher-задач |
-| `DELETE` | `/api/runs` | Очистка истории запусков |
-
-### Read-only и отключённые cloud endpoints
-
-Cloud settings теперь берутся напрямую из `rclone.conf`. Поэтому:
-
-- `GET /api/clouds` возвращает актуальный список remotes
-- `PUT /api/clouds` существует, но отвечает `403`
-- `POST /api/clouds/import-rclone` существует, но отвечает `403`
-- `POST /api/clouds/import-rclone-remote` существует, но отвечает `403`
-- `POST /api/clouds/test` существует, но отвечает `403`
+Полное описание API вынесено в `docs/04-api-reference.md`.
 
 ---
 
