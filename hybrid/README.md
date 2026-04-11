@@ -52,34 +52,7 @@ backend/app/jobs/default_jobs.example.json
 
 ## 📖 API Surface
 
-- `GET /`
-- `GET /api/health`
-- `GET /api/state`
-- `GET /api/jobs`
-- `GET /api/gotify`
-- `GET /api/queues`
-- `GET /api/bandwidth`
-- `GET /api/logging`
-- `GET /api/watcher`
-- `GET /api/logging/rclone-tail`
-- `GET /api/clouds`
-- `GET /api/fs/browse`
-- `GET /api/runs`
-- `GET /api/runs/{run_id}`
-- `PUT /api/gotify`
-- `PUT /api/queues`
-- `PUT /api/bandwidth`
-- `PUT /api/logging`
-- `PUT /api/watcher`
-- `DELETE /api/logging/rclone-log`
-- `POST /api/runs`
-- `POST /api/runs/job/{job_key}`
-- `POST /api/run-steps/{step_id}/control`
-- `POST /api/triggers/event`
-- `PUT /api/backups`
-- `PUT /api/jobs`
-
-Подробное описание находится в `docs/04-api-reference.md`.
+Полное описание вынесено в `docs/04-api-reference.md`. Ниже приведён краткий обзор текущего API без сокращений и устаревших endpoints.
 
 ---
 
