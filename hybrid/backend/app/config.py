@@ -46,6 +46,8 @@ class Settings:
     standard_interval_minutes: int
     heavy_hour: int
     watcher_debounce_seconds: int
+    copy_startup_delay_seconds: int
+    copy_min_start_interval_seconds: int
     default_timeout_seconds: int
     output_tail_chars: int
     dry_run: bool
@@ -87,6 +89,11 @@ def load_settings() -> Settings:
         watcher_debounce_seconds=max(
             1,
             _read_int_any(["HYBRID_WATCHER_DEBOUNCE_SECONDS", "HYBRID_EVENT_DEBOUNCE_SECONDS"], 45),
+        ),
+        copy_startup_delay_seconds=max(0, _read_int("HYBRID_COPY_STARTUP_DELAY_SECONDS", 60)),
+        copy_min_start_interval_seconds=max(
+            0,
+            _read_int("HYBRID_COPY_MIN_START_INTERVAL_SECONDS", 60),
         ),
         default_timeout_seconds=max(1, _read_int("HYBRID_DEFAULT_TIMEOUT_SECONDS", 3600)),
         output_tail_chars=max(512, _read_int("HYBRID_OUTPUT_TAIL_CHARS", 8000)),

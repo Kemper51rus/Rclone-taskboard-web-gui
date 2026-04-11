@@ -22,6 +22,16 @@
 | `GET` | `/api/state` | Общее состояние, очереди, workers, последние запуски и флаг `token_required` |
 | `GET` | `/api/jobs` | Полный рабочий каталог: профили, очереди, Gotify, bandwidth, logging, watcher, clouds и jobs |
 
+### Важные поля `GET /api/state`
+
+- `queue_statuses` — состояние очередей
+- `copy_progress` — активные и ожидающие backup/copy шаги для progress UI
+- `total_copy_speed_bytes_per_second` — суммарная скорость всех активных `copy/sync` задач в байтах в секунду
+- `active_operations` — список открытых операций
+- `latest_runs` — последние запуски
+- `backup_jobs` — backup-задачи каталога
+- `watcher` — runtime-статус встроенного наблюдателя
+
 ---
 
 ## ⚙️ Настройки

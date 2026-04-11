@@ -42,6 +42,8 @@ backend/app/jobs/default_jobs.example.json
 - `HYBRID_RCLONE_CONFIG`
 - `HYBRID_API_TOKEN`
 - `HYBRID_WATCHER_DEBOUNCE_SECONDS`
+- `HYBRID_COPY_STARTUP_DELAY_SECONDS`
+- `HYBRID_COPY_MIN_START_INTERVAL_SECONDS`
 - `HYBRID_ENABLE_SCHEDULER`
 - `HYBRID_STANDARD_INTERVAL_MINUTES`
 - `HYBRID_HEAVY_HOUR`
@@ -84,4 +86,5 @@ backend/app/jobs/default_jobs.example.json
 ## 📘 Связанные документы
 
 - [Руководство по развертыванию](/root/projects/rclone-web-ui/rclone/docs/07-deployment.md)
+- [Служебные заметки для разработки](/root/projects/rclone-web-ui/rclone/docs/08-development-notes.md)
 - [Архивные материалы по legacy](/root/projects/rclone-web-ui/rclone/legacy/README.md)

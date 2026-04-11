@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 from pathlib import Path
 import queue
@@ -24,6 +24,8 @@ from .storage import Storage
 
 
 logger = logging.getLogger(__name__)
+COPY_LAST_STARTED_AT_STATE_KEY = "copy_last_started_at"
+DATA_SIZE_RE = re.compile(r"^([0-9]+(?:[.,][0-9]+)?)\s*([KMGTPE]?i?B)$", re.IGNORECASE)
 RCLONE_LOG_STATS_RE = re.compile(
     r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} INFO\s+:\s+(.+?) / (.+?),\s+([0-9-]+)%,\s+([^,]+),\s+ETA\s+(.+?)(?:\s+\(xfr#.*\))?$"
 )
@@ -51,14 +53,20 @@ class Orchestrator:
         self._queue_lock = threading.RLock()
         self._run_queues: dict[str, queue.Queue[int | None]] = {}
         self._worker_threads: dict[str, list[threading.Thread]] = {}
+        self._delayed_runs_by_queue: dict[str, set[int]] = {}
 
         self._scheduler_thread: threading.Thread | None = None
+        self._copy_start_gate_lock = threading.Lock()
+        self._copy_starts_allowed_after: datetime | None = None
 
     def start(self) -> None:
         if self._scheduler_thread and self._scheduler_thread.is_alive():
             return
 
         self._stop_event.clear()
+        self._copy_starts_allowed_after = datetime.now(timezone.utc) + timedelta(
+            seconds=self.settings.copy_startup_delay_seconds
+        )
         self.sync_workers_from_catalog()
 
         if self.settings.enable_scheduler:
@@ -94,6 +102,7 @@ class Orchestrator:
             for queue_name in desired:
                 self._run_queues.setdefault(queue_name, queue.Queue())
                 self._worker_threads.setdefault(queue_name, [])
+                self._delayed_runs_by_queue.setdefault(queue_name, set())
 
             for queue_name, worker_count in desired.items():
                 current = self._worker_threads.get(queue_name, [])
@@ -282,8 +291,20 @@ class Orchestrator:
         step = self.storage.get_run_step(step_id)
         if not step:
             raise ValueError("run step not found")
-        if step.get("status") != "running":
-            raise ValueError("only running steps can be controlled")
+        step_status = str(step.get("status") or "")
+        if action == "stop" and step_status == "queued":
+            run_id = int(step["run_id"])
+            changed = self.storage.stop_queued_run(run_id, summary="stopped from dashboard before start")
+            self._clear_run_delayed_any(run_id)
+            if not changed:
+                raise ValueError("step is no longer queued")
+            return {
+                "ok": True,
+                "step_id": step_id,
+                "action": action,
+            }
+        if step_status != "running":
+            raise ValueError("only running steps can be paused or resumed")
         if action == "pause":
             changed = self.runner.pause(step_id)
         elif action == "resume":
@@ -318,7 +339,15 @@ class Orchestrator:
             "last_standard_tick": self.storage.get_state("scheduler_last_standard_tick"),
             "last_heavy_day": self.storage.get_state("scheduler_last_heavy_day"),
             "last_event_enqueued_at": self.storage.get_state("event_last_enqueued_at"),
+            "last_copy_started_at": self.storage.get_state(COPY_LAST_STARTED_AT_STATE_KEY),
+            "copy_starts_allowed_after": (
+                self._copy_starts_allowed_after.isoformat()
+                if self._copy_starts_allowed_after is not None
+                else None
+            ),
+            "next_copy_start_at": self._next_copy_start_at(),
             "copy_progress": self._copy_progress_snapshot(),
+            "total_copy_speed_bytes_per_second": self._total_copy_speed_bytes_per_second(),
             "active_operations": self._active_operations_snapshot(),
         }
 
@@ -341,7 +370,8 @@ class Orchestrator:
                         "title": definition.title,
                         "workers": definition.workers,
                         "alive_workers": sum(1 for thread in workers if thread.is_alive()),
-                        "queued_runs": run_queue.qsize() if run_queue else 0,
+                        "queued_runs": (run_queue.qsize() if run_queue else 0)
+                        + len(self._delayed_runs_by_queue.get(definition.key, set())),
                         "open_runs": self.storage.open_run_count(definition.key),
                         "bandwidth_limit": definition.bandwidth_limit,
                         "enabled": definition.enabled,
@@ -395,24 +425,41 @@ class Orchestrator:
                 break
 
             try:
-                self._process_run(item)
+                self._process_run(item, queue_name)
             except Exception:
                 logger.exception("run %s failed in %s queue", item, queue_name)
 
-    def _process_run(self, run_id: int) -> None:
+    def _process_run(self, run_id: int, queue_name: str) -> None:
         run = self.storage.get_run(run_id)
         if not run:
             return
+        if str(run.get("status") or "") not in {"queued", "running"}:
+            self._clear_run_delayed_any(run_id)
+            return
 
-        self.storage.mark_run_running(run_id)
         steps = self.storage.list_run_steps(run_id)
         total_steps = len(steps)
         completed_steps = 0
         error_count = 0
         failed_jobs: list[str] = []
+        run_started = False
 
         for step in steps:
             step_id = int(step["id"])
+            if self._step_needs_copy_gate(step):
+                if not run_started:
+                    self._mark_run_delayed(queue_name, run_id)
+                    try:
+                        if not self._wait_for_copy_start_slot(run_id=run_id, step_id=step_id, step=step):
+                            return
+                    finally:
+                        self._clear_run_delayed(queue_name, run_id)
+                else:
+                    if not self._wait_for_copy_start_slot(run_id=run_id, step_id=step_id, step=step):
+                        return
+            if not run_started:
+                self.storage.mark_run_running(run_id)
+                run_started = True
             self.storage.mark_step_running(step_id)
 
             command = self._bind_step_rclone_log(
@@ -542,12 +589,28 @@ class Orchestrator:
                     "speed": progress.get("speed"),
                     "eta": progress.get("eta"),
                     "raw_line": progress.get("raw_line"),
+                    "delayed_by_antibot": effective_status == "queued"
+                    and self._run_delayed_by_antibot(int(step["run_id"])),
                     "can_pause": effective_status == "running",
                     "can_resume": effective_status == "paused",
-                    "can_stop": effective_status in {"running", "paused"},
+                    "can_stop": effective_status in {"queued", "running", "paused"},
                 }
             )
         return items
+
+    def _total_copy_speed_bytes_per_second(self) -> int:
+        total = 0.0
+        for item in self._copy_progress_snapshot():
+            if str(item.get("status") or "") != "running":
+                continue
+            speed_raw = str(item.get("speed") or "").strip()
+            if not speed_raw:
+                continue
+            parsed = self._parse_speed_bytes_per_second(speed_raw)
+            if parsed is None:
+                continue
+            total += parsed
+        return int(total)
 
     def _step_rclone_log_path(self, run_id: int, step_id: int) -> Path:
         logs_dir = self.settings.app_root / "data" / "rclone-logs"
@@ -657,6 +720,38 @@ class Orchestrator:
             }
         return None
 
+    @staticmethod
+    def _parse_speed_bytes_per_second(raw_value: str) -> float | None:
+        normalized = str(raw_value or "").strip()
+        if not normalized:
+            return None
+        if normalized.lower().endswith("/s"):
+            normalized = normalized[:-2].strip()
+        match = DATA_SIZE_RE.match(normalized)
+        if not match:
+            return None
+        amount = float(match.group(1).replace(",", "."))
+        unit = match.group(2).upper()
+        factors = {
+            "B": 1,
+            "KB": 1000,
+            "MB": 1000**2,
+            "GB": 1000**3,
+            "TB": 1000**4,
+            "PB": 1000**5,
+            "EB": 1000**6,
+            "KIB": 1024,
+            "MIB": 1024**2,
+            "GIB": 1024**3,
+            "TIB": 1024**4,
+            "PIB": 1024**5,
+            "EIB": 1024**6,
+        }
+        factor = factors.get(unit)
+        if factor is None:
+            return None
+        return amount * factor
+
     def _expand_steps(self, jobs: list[JobDefinition]) -> list[RunStepDefinition]:
         expanded: list[RunStepDefinition] = []
         for job in jobs:
@@ -720,6 +815,9 @@ class Orchestrator:
             if self.storage.get_state(state_key) == schedule_slot:
                 continue
 
+            if self.catalog.queues.allow_scheduler_queueing and self.storage.has_open_run_for_job(job.key):
+                continue
+
             if self._scheduler_enqueue_blocked(job.profile):
                 continue
 
@@ -740,3 +838,90 @@ class Orchestrator:
             if job.profile == "heavy":
                 self.storage.set_state("scheduler_last_heavy_day", schedule_slot)
             logger.info("scheduled job %s: %s", job.key, run_id)
+
+    def _step_needs_copy_gate(self, step: dict[str, Any]) -> bool:
+        if step.get("step_kind") != "job":
+            return False
+        job = self.catalog.get_job(str(step.get("job_key", "")))
+        return bool(job and job.kind == "backup")
+
+    def _wait_for_copy_start_slot(self, run_id: int, step_id: int, step: dict[str, Any]) -> bool:
+        job_key = str(step.get("job_key", "") or "unknown")
+        while not self._stop_event.is_set():
+            current_run = self.storage.get_run(run_id)
+            if not current_run or str(current_run.get("status") or "") not in {"queued", "running"}:
+                return False
+            wait_seconds = self._reserve_copy_start_slot()
+            if wait_seconds <= 0:
+                return True
+            logger.info(
+                "delaying copy start for step %s job %s by %.1fs",
+                step_id,
+                job_key,
+                wait_seconds,
+            )
+            if self._stop_event.wait(min(wait_seconds, 5)):
+                return False
+        return False
+
+    def _reserve_copy_start_slot(self) -> float:
+        with self._copy_start_gate_lock:
+            now = datetime.now(timezone.utc)
+            next_allowed_at = self._next_copy_start_at_dt(now=now)
+            if next_allowed_at is not None:
+                wait_seconds = (next_allowed_at - now).total_seconds()
+                if wait_seconds > 0:
+                    return wait_seconds
+            self.storage.set_state(COPY_LAST_STARTED_AT_STATE_KEY, now.isoformat())
+            return 0.0
+
+    def _next_copy_start_at(self, now: datetime | None = None) -> str | None:
+        next_allowed_at = self._next_copy_start_at_dt(now=now)
+        return next_allowed_at.isoformat() if next_allowed_at is not None else None
+
+    def _next_copy_start_at_dt(self, now: datetime | None = None) -> datetime | None:
+        current = now or datetime.now(timezone.utc)
+        candidates: list[datetime] = []
+        if self._copy_starts_allowed_after is not None:
+            candidates.append(self._copy_starts_allowed_after)
+
+        last_started_raw = self.storage.get_state(COPY_LAST_STARTED_AT_STATE_KEY)
+        if last_started_raw:
+            try:
+                last_started_at = datetime.fromisoformat(last_started_raw)
+                candidates.append(
+                    last_started_at
+                    + timedelta(seconds=self.settings.copy_min_start_interval_seconds)
+                )
+            except ValueError:
+                logger.warning(
+                    "invalid %s state value: %s",
+                    COPY_LAST_STARTED_AT_STATE_KEY,
+                    last_started_raw,
+                )
+
+        if not candidates:
+            return None
+        next_allowed_at = max(candidates)
+        if next_allowed_at <= current:
+            return None
+        return next_allowed_at
+
+    def _mark_run_delayed(self, queue_name: str, run_id: int) -> None:
+        with self._queue_lock:
+            self._delayed_runs_by_queue.setdefault(queue_name, set()).add(run_id)
+
+    def _clear_run_delayed(self, queue_name: str, run_id: int) -> None:
+        with self._queue_lock:
+            delayed = self._delayed_runs_by_queue.get(queue_name)
+            if delayed is not None:
+                delayed.discard(run_id)
+
+    def _clear_run_delayed_any(self, run_id: int) -> None:
+        with self._queue_lock:
+            for delayed in self._delayed_runs_by_queue.values():
+                delayed.discard(run_id)
+
+    def _run_delayed_by_antibot(self, run_id: int) -> bool:
+        with self._queue_lock:
+            return any(run_id in delayed for delayed in self._delayed_runs_by_queue.values())

@@ -623,6 +623,8 @@ def normalize_bwlimit(limit: str | None) -> str | None:
     raw_limit = str(limit or "").strip()
     if not raw_limit or raw_limit.lower() in DISABLED_BWLIMIT_VALUES:
         return None
+    if raw_limit.isdigit():
+        return f"{raw_limit}B"
     return raw_limit
 
 

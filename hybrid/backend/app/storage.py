@@ -177,6 +177,35 @@ class Storage:
                 )
                 conn.commit()
 
+    def stop_queued_run(self, run_id: int, summary: str = "stopped before start") -> bool:
+        finished_at = utc_now_iso()
+        with self._lock:
+            with self._connect() as conn:
+                run_row = conn.execute(
+                    "SELECT status FROM runs WHERE id = ?",
+                    (run_id,),
+                ).fetchone()
+                if run_row is None or str(run_row["status"]) != "queued":
+                    return False
+                conn.execute(
+                    """
+                    UPDATE run_steps
+                    SET status = 'stopped', finished_at = ?, progress_updated_at = COALESCE(progress_updated_at, ?)
+                    WHERE run_id = ? AND status = 'queued'
+                    """,
+                    (finished_at, finished_at, run_id),
+                )
+                conn.execute(
+                    """
+                    UPDATE runs
+                    SET status = 'stopped', finished_at = ?, summary = ?, error_count = 1
+                    WHERE id = ?
+                    """,
+                    (finished_at, summary, run_id),
+                )
+                conn.commit()
+                return True
+
     def recover_incomplete_runs(self) -> int:
         recovered = 0
         finished_at = utc_now_iso()
@@ -304,9 +333,28 @@ class Storage:
             with self._connect() as conn:
                 rows = conn.execute(
                     """
-                    SELECT id, profile, trigger_type, source, requested_by, status,
-                           requested_at, started_at, finished_at, summary, error_count
-                    FROM runs
+                    SELECT
+                        r.id,
+                        r.profile,
+                        r.trigger_type,
+                        r.source,
+                        r.requested_by,
+                        r.status,
+                        r.requested_at,
+                        r.started_at,
+                        r.finished_at,
+                        r.summary,
+                        r.error_count,
+                        (
+                            SELECT CASE
+                                WHEN COUNT(DISTINCT rs.job_key) = 1 THEN MIN(rs.job_key)
+                                ELSE NULL
+                            END
+                            FROM run_steps rs
+                            WHERE rs.run_id = r.id
+                              AND rs.step_kind = 'job'
+                        ) AS job_key
+                    FROM runs r
                     ORDER BY id DESC
                     LIMIT ?
                     """,
@@ -475,6 +523,57 @@ class Storage:
                         "SELECT COUNT(*) AS count FROM runs WHERE status IN ('queued', 'running')"
                     ).fetchone()
         return int(row["count"]) if row else 0
+
+    def has_open_run_for_job(self, job_key: str) -> bool:
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT 1
+                    FROM runs r
+                    JOIN run_steps rs ON rs.run_id = r.id
+                    WHERE r.status IN ('queued', 'running')
+                      AND rs.job_key = ?
+                      AND rs.status IN ('queued', 'running')
+                    LIMIT 1
+                    """,
+                    (job_key,),
+                ).fetchone()
+        return row is not None
+
+    def latest_job_run_map(self) -> dict[str, dict[str, Any]]:
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT
+                        rs.job_key,
+                        r.id AS run_id,
+                        r.status AS run_status,
+                        r.trigger_type,
+                        r.requested_at,
+                        r.started_at,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY rs.job_key
+                            ORDER BY COALESCE(r.started_at, r.requested_at) DESC, r.id DESC
+                        ) AS row_number
+                    FROM run_steps rs
+                    JOIN runs r ON r.id = rs.run_id
+                    WHERE rs.step_kind = 'job'
+                    """
+                ).fetchall()
+        items: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if int(row["row_number"]) != 1:
+                continue
+            items[str(row["job_key"])] = {
+                "run_id": int(row["run_id"]),
+                "status": str(row["run_status"]),
+                "trigger_type": str(row["trigger_type"]),
+                "requested_at": row["requested_at"],
+                "started_at": row["started_at"],
+            }
+        return items
 
     def set_state(self, key: str, value: str) -> None:
         with self._lock:

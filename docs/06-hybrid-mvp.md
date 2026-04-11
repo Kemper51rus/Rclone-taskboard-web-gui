@@ -93,6 +93,8 @@ default_jobs.example.json -> default_jobs.json
 | `HYBRID_STANDARD_INTERVAL_MINUTES` | Интервал стандартных задач |
 | `HYBRID_HEAVY_HOUR` | Час heavy-задач |
 | `HYBRID_WATCHER_DEBOUNCE_SECONDS` | Начальное значение debounce для watcher |
+| `HYBRID_COPY_STARTUP_DELAY_SECONDS` | Задержка перед первым стартом backup/sync после запуска backend |
+| `HYBRID_COPY_MIN_START_INTERVAL_SECONDS` | Минимальный интервал между стартами backup/sync по всей системе |
 | `HYBRID_DEFAULT_TIMEOUT_SECONDS` | Таймаут команд по умолчанию |
 | `HYBRID_OUTPUT_TAIL_CHARS` | Размер сохраняемого tail вывода |
 | `HYBRID_DRY_RUN` | Dry-run режим |

@@ -409,6 +409,13 @@ def state() -> dict[str, Any]:
 @app.get("/api/jobs")
 def jobs() -> dict[str, Any]:
     clouds = _refresh_catalog_clouds_from_rclone()
+    latest_runs_by_job = storage.latest_job_run_map()
+    jobs_payload = catalog.list_jobs()
+    for item in jobs_payload:
+        latest_run = latest_runs_by_job.get(str(item.get("key", "")), {})
+        item["last_run"] = latest_run or None
+        item["last_run_started_at"] = latest_run.get("started_at") if latest_run else None
+        item["last_run_requested_at"] = latest_run.get("requested_at") if latest_run else None
     return {
         "profiles": catalog.profiles,
         "gotify": catalog.gotify.to_dict(),
@@ -417,7 +424,7 @@ def jobs() -> dict[str, Any]:
         "logging": catalog.logging.to_dict(),
         "watcher": catalog.watcher.to_dict(),
         "clouds": [cloud.to_dict() for cloud in clouds],
-        "jobs": catalog.list_jobs(),
+        "jobs": jobs_payload,
         "backup_jobs": catalog.list_backup_jobs(),
         "command_jobs": catalog.list_command_jobs(),
     }

@@ -444,17 +444,70 @@
       color: var(--accent-2);
     }
     .status-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+      display: flex;
+      flex-wrap: nowrap;
+      align-items: stretch;
       gap: 10px;
       margin-bottom: 18px;
     }
     .metric {
+      flex: 1 1 auto;
       min-width: 0;
+      width: auto;
       padding: 12px 14px;
       border-radius: 16px;
       border: 1px solid var(--line);
       background: rgba(255, 255, 255, 0.03);
+    }
+    .ui-tooltip {
+      position: relative;
+    }
+    .ui-tooltip.has-tooltip {
+      cursor: help;
+    }
+    .ui-tooltip.has-tooltip::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 6px);
+      transform: translateX(-50%);
+      border-width: 6px 6px 0 6px;
+      border-style: solid;
+      border-color: rgba(10, 18, 28, 0.96) transparent transparent transparent;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 140ms ease;
+      z-index: 20;
+    }
+    .ui-tooltip.has-tooltip::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 12px);
+      transform: translateX(-50%);
+      min-width: 220px;
+      max-width: 280px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(124, 224, 255, 0.22);
+      background: rgba(10, 18, 28, 0.96);
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.35);
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: normal;
+      text-transform: none;
+      letter-spacing: normal;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 140ms ease;
+      z-index: 20;
+    }
+    .ui-tooltip.has-tooltip:hover::before,
+    .ui-tooltip.has-tooltip:hover::after,
+    .ui-tooltip.has-tooltip:focus-visible::before,
+    .ui-tooltip.has-tooltip:focus-visible::after {
+      opacity: 1;
     }
     .metric .k {
       color: var(--soft);
@@ -474,6 +527,16 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    .metric .v.countdown {
+      font-size: clamp(16px, 1.8vw, 24px);
+      letter-spacing: 0.04em;
+    }
+    .metric .meta {
+      margin-top: 6px;
+      color: var(--soft);
+      font-size: 11px;
+      line-height: 1.3;
     }
     .copy-progress-panel {
       margin-bottom: 18px;
@@ -1010,7 +1073,7 @@
   <div class="shell">
     <section class="hero">
       <div class="hero-top">
-        <div class="hero-logo">Rclone Commander</div>
+        <div class="hero-logo">Rclone командер</div>
         <p class="hero-message" id="messagePanel" role="status" aria-live="polite"></p>
       </div>
       <div class="hero-actions">
@@ -1020,8 +1083,8 @@
         <button id="cloudsToggle" onclick="toggleClouds()">Облака</button>
         <button id="queuesToggle" onclick="toggleQueues()">Очереди</button>
         <button id="loggingToggle" onclick="toggleLogging()">Логи</button>
-        <button id="watcherToggle" onclick="toggleWatcher()">Watcher</button>
-        <button id="gotifyToggle" onclick="toggleGotify()">Gotify</button>
+        <button id="watcherToggle" onclick="toggleWatcher()">Наблюдатель</button>
+        <button id="gotifyToggle" onclick="toggleGotify()">Уведомления</button>
       </div>
     </section>
 
@@ -1104,7 +1167,7 @@
               <tr>
                 <th>ID</th>
                 <th>Статус</th>
-                <th>Профиль</th>
+                <th>Ключ задачи</th>
                 <th>Триггер</th>
                 <th>Запрошен</th>
                 <th>Сводка</th>
@@ -1436,6 +1499,7 @@
       toastTimer: null,
       toastHideTimer: null,
       serviceMessage: { text: "", tone: "ok" },
+      lastSnapshot: null,
       browseTarget: "source",
       browseEntries: [],
       browseSelectedIndex: 0,
@@ -1448,19 +1512,19 @@
     let queueAutoSaveTimer = null;
     const bandwidthPresets = [
       { value: "", label: "Без лимита" },
-      { value: "1250000", label: "10 Mbps" },
-      { value: "6250000", label: "50 Mbps" },
-      { value: "12500000", label: "100 Mbps" },
-      { value: "31250000", label: "250 Mbps" },
-      { value: "87500000", label: "700 Mbps" },
+      { value: "1250000B", label: "10 Mbps" },
+      { value: "6250000B", label: "50 Mbps" },
+      { value: "12500000B", label: "100 Mbps" },
+      { value: "31250000B", label: "250 Mbps" },
+      { value: "87500000B", label: "700 Mbps" },
     ];
     const queueBandwidthPresets = [
       { value: "", label: "Глобальный лимит" },
-      { value: "1250000", label: "10 Mbps" },
-      { value: "6250000", label: "50 Mbps" },
-      { value: "12500000", label: "100 Mbps" },
-      { value: "31250000", label: "250 Mbps" },
-      { value: "87500000", label: "700 Mbps" },
+      { value: "1250000B", label: "10 Mbps" },
+      { value: "6250000B", label: "50 Mbps" },
+      { value: "12500000B", label: "100 Mbps" },
+      { value: "31250000B", label: "250 Mbps" },
+      { value: "87500000B", label: "700 Mbps" },
     ];
     const weekdayGrid = document.getElementById("weekdayGrid");
     weekdayGrid.innerHTML = weekdayLabels.map((label, index) => `
@@ -1550,12 +1614,13 @@
     }
 
     function updateServiceMessage(snapshot) {
-      const standardAlive = Boolean(snapshot?.standard_worker_alive);
-      const heavyAlive = Boolean(snapshot?.heavy_worker_alive);
+      const queueStatuses = Array.isArray(snapshot?.queue_statuses)
+        ? snapshot.queue_statuses.filter((item) => item?.enabled !== false)
+        : [];
+      const aliveWorkers = queueStatuses.reduce((sum, item) => sum + Number(item?.alive_workers || 0), 0);
       const openRuns = Number(snapshot?.open_runs_total || 0);
-      const standardQueue = Number(snapshot?.standard_queue_size || 0);
-      const heavyQueue = Number(snapshot?.heavy_queue_size || 0);
-      if (!standardAlive) {
+      const queuedRuns = queueStatuses.reduce((sum, item) => sum + Number(item?.queued_runs || 0), 0);
+      if (queueStatuses.length > 0 && aliveWorkers < 1) {
         state.serviceMessage = {
           text: "Служба недоступна",
           tone: "error",
@@ -1565,20 +1630,14 @@
           text: `Идёт выполнение: ${openRuns} ${openRuns === 1 ? "задача" : "задач"}`,
           tone: "ok",
         };
-      } else if (standardQueue > 0 || heavyQueue > 0) {
-        const queued = standardQueue + heavyQueue;
+      } else if (queuedRuns > 0) {
         state.serviceMessage = {
-          text: `Очередь занята: ${queued} ${queued === 1 ? "задача" : "задач"} ожидает`,
-          tone: "ok",
-        };
-      } else if (heavyAlive) {
-        state.serviceMessage = {
-          text: "Служба: running",
+          text: `Очередь занята: ${queuedRuns} ${queuedRuns === 1 ? "задача" : "задач"} ожидает`,
           tone: "ok",
         };
       } else {
         state.serviceMessage = {
-          text: "Служба: running",
+          text: "Служба: работает",
           tone: "ok",
         };
       }
@@ -1610,14 +1669,14 @@
     function formatMetricTimestamp(value) {
       const raw = String(value || "").trim();
       if (!raw || raw === "none") return "none";
-      const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
-      if (!match) return raw;
-      const [, , month, day, hour, minute] = match;
-      const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-      const monthLabel = monthLabels[Number(month) - 1] || month;
-      return hour && minute
-        ? `${monthLabel} ${day} ${hour}:${minute}`
-        : `${monthLabel} ${day}`;
+      const parsed = new Date(raw);
+      if (Number.isNaN(parsed.getTime())) return raw;
+      const monthLabels = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+      const monthLabel = monthLabels[parsed.getMonth()];
+      const day = String(parsed.getDate()).padStart(2, "0");
+      const hours = String(parsed.getHours()).padStart(2, "0");
+      const minutes = String(parsed.getMinutes()).padStart(2, "0");
+      return `${day} ${monthLabel} ${hours}:${minutes}`;
     }
 
     function formatRunTimestamp(value) {
@@ -1625,26 +1684,112 @@
       if (!raw) return "";
       const parsed = new Date(raw);
       if (Number.isNaN(parsed.getTime())) return raw;
-      const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const monthLabels = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
       const monthLabel = monthLabels[parsed.getMonth()];
       const day = String(parsed.getDate()).padStart(2, "0");
       const hours = String(parsed.getHours()).padStart(2, "0");
       const minutes = String(parsed.getMinutes()).padStart(2, "0");
       const seconds = String(parsed.getSeconds()).padStart(2, "0");
-      return `${monthLabel} ${day} ${hours}:${minutes}:${seconds}`;
+      return `${day} ${monthLabel} ${hours}:${minutes}:${seconds}`;
+    }
+
+    function formatTriggerLabel(run) {
+      const triggerType = String(run?.trigger_type || "").trim().toLowerCase();
+      const source = String(run?.source || "").trim().toLowerCase();
+      const requestedBy = String(run?.requested_by || "").trim().toLowerCase();
+      if (triggerType === "schedule") return "планировщик";
+      if (triggerType === "event") {
+        if (requestedBy === "watcher" || source === "watcher") return "наблюдатель";
+        return "событие";
+      }
+      if (triggerType === "manual") {
+        if (requestedBy === "api" || source === "api") return "вручную (API)";
+        return "вручную";
+      }
+      return triggerType || "—";
+    }
+
+    function formatCountdown(totalSeconds) {
+      const safe = Math.max(0, Number(totalSeconds) || 0);
+      return String(safe);
+    }
+
+    function antiBotMetric(snapshot) {
+      const nextRaw = String(snapshot?.next_copy_start_at || "").trim();
+      if (!nextRaw) {
+        return {
+          metricId: "antibot",
+          key: "Антибот",
+          value: "готов",
+          valueClass: "",
+          tight: false,
+        };
+      }
+      const nextAt = new Date(nextRaw);
+      if (Number.isNaN(nextAt.getTime())) {
+        return {
+          metricId: "antibot",
+          key: "Антибот",
+          value: nextRaw,
+          valueClass: "tight",
+          tight: true,
+        };
+      }
+      const secondsLeft = Math.max(0, Math.ceil((nextAt.getTime() - Date.now()) / 1000));
+      if (secondsLeft <= 0) {
+        return {
+          metricId: "antibot",
+          key: "Антибот",
+          value: "готов",
+          valueClass: "",
+          tight: false,
+        };
+      }
+      return {
+        metricId: "antibot",
+        key: "Антибот",
+        value: formatCountdown(secondsLeft),
+        valueClass: "countdown",
+        tight: false,
+      };
+    }
+
+    function queueMetrics(snapshot) {
+      const queueStatuses = Array.isArray(snapshot?.queue_statuses)
+        ? snapshot.queue_statuses.filter((item) => item?.enabled !== false)
+        : [];
+      return queueStatuses.map((item) => ({
+        key: item.title || item.key || "queue",
+        value: `${Number(item.queued_runs || 0)}/${Number(item.open_runs || 0)} | ${Number(item.alive_workers || 0)}/${Number(item.workers || 0)}`,
+        tight: true,
+        tooltip: `Очередь ${item.title || item.key || "queue"}: в очереди ${Number(item.queued_runs || 0)}, в работе ${Number(item.open_runs || 0)}, активных воркеров ${Number(item.alive_workers || 0)} из ${Number(item.workers || 0)}.`,
+      }));
+    }
+
+    function totalCopySpeedMetric(snapshot) {
+      const apiValue = Number(snapshot?.total_copy_speed_bytes_per_second);
+      const totalBytesPerSecond = Number.isFinite(apiValue)
+        ? apiValue
+        : (Array.isArray(snapshot?.copy_progress) ? snapshot.copy_progress : []).reduce((sum, item) => {
+            if (String(item?.status || "") !== "running") return sum;
+            const speed = parseSpeedToBytesPerSecond(item?.speed);
+            return sum + (Number.isFinite(speed) ? speed : 0);
+          }, 0);
+      return {
+        key: "Скорость",
+        value: formatMegabitsPerSecondValue(totalBytesPerSecond, true),
+        tight: true,
+      };
     }
 
     function metrics(snapshot) {
       return [
-        ["standard queue", snapshot.standard_queue_size],
-        ["heavy queue", snapshot.heavy_queue_size],
-        ["open runs", snapshot.open_runs_total],
-        ["backup jobs", (snapshot.backup_jobs || []).length],
-        ["worker standard", snapshot.standard_worker_alive ? "alive" : "down"],
-        ["worker heavy", snapshot.heavy_worker_alive ? "alive" : "down"],
-        ["scheduler", snapshot.scheduler_alive ? "alive" : "down"],
-        ["last standard", formatMetricTimestamp(snapshot.last_standard_tick)],
-        ["last heavy", formatMetricTimestamp(snapshot.last_heavy_day)],
+        { key: "Выполняются", value: snapshot.open_runs_total },
+        { key: "Задачи", value: (snapshot.backup_jobs || []).length },
+        totalCopySpeedMetric(snapshot),
+        antiBotMetric(snapshot),
+        { key: "Планировщик", value: snapshot.scheduler_alive ? "работает" : "остановлен" },
+        ...queueMetrics(snapshot),
       ];
     }
 
@@ -1655,12 +1800,98 @@
       return null;
     }
 
+    function parseDataSizeToBytes(rawValue) {
+      const raw = String(rawValue || "").trim();
+      if (!raw) return null;
+      const match = raw.match(/^([0-9]+(?:[.,][0-9]+)?)\s*([KMGTPE]?i?B)$/i);
+      if (!match) return null;
+      const amount = Number(match[1].replace(",", "."));
+      if (!Number.isFinite(amount)) return null;
+      const unit = match[2];
+      const factors = {
+        B: 1,
+        KB: 1000,
+        MB: 1000 ** 2,
+        GB: 1000 ** 3,
+        TB: 1000 ** 4,
+        PB: 1000 ** 5,
+        EB: 1000 ** 6,
+        KIB: 1024,
+        MIB: 1024 ** 2,
+        GIB: 1024 ** 3,
+        TIB: 1024 ** 4,
+        PIB: 1024 ** 5,
+        EIB: 1024 ** 6,
+      };
+      const factor = factors[unit.toUpperCase()];
+      if (!factor) return null;
+      return amount * factor;
+    }
+
+    function formatDataAmount(rawValue) {
+      const bytes = parseDataSizeToBytes(rawValue);
+      if (bytes === null) return String(rawValue || "").trim();
+      const megabytes = bytes / (1000 ** 2);
+      if (megabytes >= 1000) {
+        const gigabytes = bytes / (1000 ** 3);
+        const digits = gigabytes >= 100 ? 0 : 2;
+        return `${gigabytes.toFixed(digits).replace(".", ",")} ГБ`;
+      }
+      const digits = megabytes >= 100 ? 0 : 2;
+      return `${megabytes.toFixed(digits).replace(".", ",")} МБ`;
+    }
+
+    function formatMegabitsPerSecond(rawValue) {
+      const raw = String(rawValue || "").trim();
+      if (!raw) return "";
+      const bytes = parseSpeedToBytesPerSecond(rawValue);
+      if (bytes === null) return raw;
+      return formatMegabitsPerSecondValue(bytes);
+    }
+
+    function parseSpeedToBytesPerSecond(rawValue) {
+      const raw = String(rawValue || "").trim();
+      if (!raw) return null;
+      const normalized = raw.replace(/\/s$/i, "").trim();
+      return parseDataSizeToBytes(normalized);
+    }
+
+    function formatMegabitsPerSecondValue(bytesPerSecond, keepUnitForZero = false) {
+      const safe = Number(bytesPerSecond || 0);
+      if (safe <= 0) return keepUnitForZero ? "0 Мбит/с" : "0";
+      const megabitsPerSecond = (safe * 8) / (1000 ** 2);
+      const digits = megabitsPerSecond >= 100 ? 0 : 2;
+      return `${megabitsPerSecond.toFixed(digits).replace(".", ",")} Мбит/с`;
+    }
+
+    function formatEtaValue(rawValue) {
+      const raw = String(rawValue || "").trim();
+      if (!raw) return "";
+      const compact = raw.replace(/\s+/g, "");
+      let totalSeconds = 0;
+      let matched = false;
+      compact.replace(/(\d+)([hms])/gi, (_, amount, unit) => {
+        const value = Number(amount);
+        if (!Number.isFinite(value)) return "";
+        matched = true;
+        if (unit.toLowerCase() === "h") totalSeconds += value * 3600;
+        if (unit.toLowerCase() === "m") totalSeconds += value * 60;
+        if (unit.toLowerCase() === "s") totalSeconds += value;
+        return "";
+      });
+      if (!matched) return raw;
+      const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, "0");
+      const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
+      const seconds = String(totalSeconds % 60).padStart(2, "0");
+      return `${hours}:${minutes}:${seconds}`;
+    }
+
     function copyProgressSummary(item) {
       const parts = [];
       if (item?.transferred && item?.total) {
-        parts.push(`${item.transferred} / ${item.total}`);
+        parts.push(`${formatDataAmount(item.transferred)} из ${formatDataAmount(item.total)}`);
       } else if (item?.transferred) {
-        parts.push(item.transferred);
+        parts.push(formatDataAmount(item.transferred));
       } else if (item?.status === "queued") {
         parts.push("Ожидает запуска");
       } else if (item?.status === "paused") {
@@ -1668,9 +1899,19 @@
       } else {
         parts.push("Ожидание статистики rclone");
       }
-      if (item?.speed) parts.push(item.speed);
-      if (item?.eta) parts.push(`ETA ${item.eta}`);
+      if (item?.speed) parts.push(formatMegabitsPerSecond(item.speed));
+      if (item?.eta) parts.push(`До завершения: ${formatEtaValue(item.eta)}`);
       return parts.join(" • ");
+    }
+
+    function antiBotDelayLabel(nextCopyStartAt) {
+      const raw = String(nextCopyStartAt || "").trim();
+      if (!raw) return "";
+      const nextAt = new Date(raw);
+      if (Number.isNaN(nextAt.getTime())) return "";
+      const secondsLeft = Math.max(0, Math.ceil((nextAt.getTime() - Date.now()) / 1000));
+      if (secondsLeft <= 0) return "";
+      return `Антибот: ${formatCountdown(secondsLeft)}`;
     }
 
     function renderCopyProgress(items, activeOperations = []) {
@@ -1695,6 +1936,7 @@
         const statusLabel = item.status === "paused" ? "paused" : (item.status === "running" ? "running" : "queued");
         const subtitle = [`run #${item.run_id}`, item.profile, item.transfer_mode].filter(Boolean).join(" • ");
         const meta = copyProgressSummary(item);
+        const antiBotDelay = item.delayed_by_antibot ? antiBotDelayLabel(state.lastSnapshot?.next_copy_start_at) : "";
         const progressValue = percent === null ? "..." : `${percent}%`;
         return `
           <article class="copy-progress-item">
@@ -1709,7 +1951,10 @@
               <div class="${fillClass}" ${fillStyle}></div>
             </div>
             <div class="copy-progress-meta">
-              <span>${escapeHtml(meta)}</span>
+              <span>
+                <span>${escapeHtml(meta)}</span>
+                ${antiBotDelay ? `<span data-antibot-copy-step="${item.step_id}" style="margin-left:8px;">${escapeHtml(antiBotDelay)}</span>` : ""}
+              </span>
               <strong>${escapeHtml(progressValue)}</strong>
             </div>
             <div class="copy-progress-actions">
@@ -1720,6 +1965,13 @@
           </article>
         `;
       }).join("");
+    }
+
+    function refreshCopyProgressCountdowns() {
+      if (!state.lastSnapshot) return;
+      document.querySelectorAll("[data-antibot-copy-step]").forEach((node) => {
+        node.textContent = antiBotDelayLabel(state.lastSnapshot?.next_copy_start_at);
+      });
     }
 
     async function controlCopyStep(stepId, action) {
@@ -2351,12 +2603,23 @@
     }
 
     function renderStatus(snapshot) {
-      document.getElementById("statusGrid").innerHTML = metrics(snapshot).map(([k, v]) => `
-        <div class="metric">
-          <div class="k">${k}</div>
-          <div class="v ${k === "last standard" || k === "last heavy" ? "tight" : ""}">${v}</div>
+      document.getElementById("statusGrid").innerHTML = metrics(snapshot).map((item) => `
+        <div class="metric ui-tooltip${item.tooltip ? " has-tooltip" : ""}"${item.metricId ? ` data-metric-id="${escapeHtml(item.metricId)}"` : ""}${item.tooltip ? ` data-tooltip="${escapeHtml(item.tooltip)}" tabindex="0"` : ""}>
+          <div class="k">${item.key}</div>
+          <div class="v ${(item.tight ? "tight " : "") + (item.valueClass || "")}">${item.value}</div>
         </div>
       `).join("");
+    }
+
+    function refreshAntiBotMetric() {
+      if (!state.lastSnapshot) return;
+      const item = antiBotMetric(state.lastSnapshot);
+      const metric = document.querySelector('.metric[data-metric-id="antibot"]');
+      if (!metric) return;
+      const valueNode = metric.querySelector(".v");
+      if (!valueNode) return;
+      valueNode.className = `v ${(item.tight ? "tight " : "") + (item.valueClass || "")}`.trim();
+      valueNode.textContent = item.value;
     }
 
     function renderRuns(runs) {
@@ -2364,8 +2627,8 @@
         <tr>
           <td><button type="button" class="run-link" onclick="showRunDetails(${run.id})">${run.id}</button></td>
           <td class="${statusClass(run.status)}">${run.status}</td>
-          <td>${run.profile}</td>
-          <td>${run.trigger_type}</td>
+          <td>${escapeHtml(run.job_key || "—")}</td>
+          <td>${escapeHtml(formatTriggerLabel(run))}</td>
           <td>${formatRunTimestamp(run.requested_at)}</td>
           <td>${run.summary || ""}</td>
         </tr>
@@ -2390,6 +2653,9 @@
       if (!normalized) return "";
       if (["off", "none", "unlimited", "disabled", "0", "0b", "0k", "0m", "0g"].includes(normalized.toLowerCase())) {
         return "";
+      }
+      if (/^\d+$/.test(normalized)) {
+        return `${normalized}B`;
       }
       return normalized;
     }
@@ -2463,13 +2729,14 @@
             <button type="button" class="pill status-toggle ${job.enabled ? "enabled" : "disabled"}" onclick="toggleJobEnabled(event, '${job.key}')">${job.enabled ? "enabled" : "disabled"}</button>
           </div>
           <div class="pill-row">
-            <div class="pill">${job.kind}</div>
+            ${job.kind !== "backup" ? `<div class="pill">команда</div>` : ""}
             ${job.kind === "backup" ? `<div class="pill">${job.transfer_mode}</div>` : ""}
             ${job.kind === "backup" && job.watcher_enabled ? `<div class="pill">watcher</div>` : ""}
             ${job.kind === "backup" && job.retention?.enabled && job.retention?.min_age ? `<div class="pill pill-retention">retention ${escapeHtml(job.retention.min_age)}</div>` : ""}
             <div class="pill">${job.profile}</div>
             ${!(job.kind === "backup" && job.watcher_enabled && job.schedule_summary === "manual") ? `<div class="pill">${job.schedule_summary}</div>` : ""}
             <div class="pill">timeout ${job.timeout_seconds}s</div>
+            <div class="pill">${job.last_run_started_at || job.last_run_requested_at ? `${escapeHtml(formatMetricTimestamp(job.last_run_started_at || job.last_run_requested_at))}` : "не запускалась"}</div>
           </div>
         </article>
       `).join("");
@@ -3330,7 +3597,7 @@
           `run #${run.id}`,
           `status: ${run.status || "-"}`,
           `profile: ${run.profile || "-"}`,
-          `trigger: ${run.trigger_type || "-"}`,
+          `trigger: ${formatTriggerLabel(run)}`,
           `requested_at: ${run.requested_at || "-"}`,
           `summary: ${run.summary || "-"}`,
         ].join("\n");
@@ -3529,6 +3796,7 @@
     async function refreshSnapshot() {
       const response = await fetch("/api/state");
       const snapshot = await response.json();
+      state.lastSnapshot = snapshot;
       state.watcherRuntime = snapshot.watcher || state.watcherRuntime;
       renderStatus(snapshot);
       renderCopyProgress(snapshot.copy_progress || [], snapshot.active_operations || []);
@@ -3667,6 +3935,10 @@
 
     document.querySelectorAll(".editor select, #globalBandwidthLimit").forEach((select) => initCustomSelect(select));
     refreshAll();
+    setInterval(() => {
+      refreshAntiBotMetric();
+      refreshCopyProgressCountdowns();
+    }, 1000);
     setInterval(() => {
       refreshSnapshot().catch((error) => setToast(error.message || "Ошибка обновления статуса", "error"));
     }, 10000);
