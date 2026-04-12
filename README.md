@@ -2,8 +2,6 @@
   <img src="https://raw.githubusercontent.com/Kemper51rus/Rclone-taskboard-web-gui/main/docs/readme-wordmark.svg" alt="Rclone taskboard" width="620">
 </p>
 
-Веб-панель для управления backup-задачами на базе `rclone`.
-
 `Rclone taskboard` собирает запуск задач, расписание, очереди, историю и интерфейс управления в одном приложении. Сам перенос данных по-прежнему выполняет `rclone`, а приложение отвечает за координацию, хранение состояния и работу API.
 
 ---
