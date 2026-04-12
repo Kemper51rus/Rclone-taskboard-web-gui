@@ -1,4 +1,5 @@
 # Secrets and local environment
+.codex
 hybrid/.env
 hybrid/backend/app/jobs/default_jobs.json
 Security.md
