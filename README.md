@@ -302,6 +302,18 @@ curl -X POST http://127.0.0.1:8080/api/triggers/event \
 sudo ./install.sh
 ```
 
+### Заливка изменений в Git
+
+```bash
+./git-push.sh -m "commit message"
+```
+
+Только отправить уже созданные commits:
+
+```bash
+./git-push.sh --push-only
+```
+
 ## ❓ FAQ
 
 ### Пройдёт ли чистый запуск без `default_jobs.json`?
