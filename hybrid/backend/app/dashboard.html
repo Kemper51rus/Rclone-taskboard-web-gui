@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Rclone Backup Studio</title>
+  <title>Rclone командер</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <style>
     :root {
       color-scheme: dark;
@@ -29,8 +30,7 @@
     }
     * { box-sizing: border-box; }
     html {
-      scrollbar-width: thin;
-      scrollbar-color: rgba(124, 224, 255, 0.5) rgba(11, 18, 28, 0.72);
+      scrollbar-width: none;
     }
     body {
       margin: 0;
@@ -42,39 +42,15 @@
         radial-gradient(circle at 100% 20%, rgba(150, 255, 218, 0.12), transparent 28%),
         linear-gradient(135deg, #0b1119 0%, #101927 35%, #132132 100%);
       background-attachment: fixed;
-      scrollbar-width: thin;
-      scrollbar-color: rgba(124, 224, 255, 0.5) rgba(11, 18, 28, 0.72);
+      scrollbar-width: none;
+      -ms-overflow-style: none;
     }
     body::-webkit-scrollbar,
     .scroll-body::-webkit-scrollbar,
     .browse-list::-webkit-scrollbar {
-      width: 12px;
-      height: 12px;
-    }
-    body::-webkit-scrollbar-track,
-    .scroll-body::-webkit-scrollbar-track,
-    .browse-list::-webkit-scrollbar-track {
-      background: transparent;
-      border-radius: 999px;
-    }
-    body::-webkit-scrollbar-thumb,
-    .scroll-body::-webkit-scrollbar-thumb,
-    .browse-list::-webkit-scrollbar-thumb {
-      background: linear-gradient(180deg, rgba(124, 224, 255, 0.62), rgba(150, 255, 218, 0.42));
-      background-clip: padding-box;
-      border: 2px solid transparent;
-      border-radius: 999px;
-      box-shadow: inset 0 0 0 1px rgba(239, 248, 255, 0.06);
-    }
-    body::-webkit-scrollbar-thumb:hover,
-    .scroll-body::-webkit-scrollbar-thumb:hover,
-    .browse-list::-webkit-scrollbar-thumb:hover {
-      background: linear-gradient(180deg, rgba(124, 224, 255, 0.78), rgba(150, 255, 218, 0.58));
-    }
-    body::-webkit-scrollbar-corner,
-    .scroll-body::-webkit-scrollbar-corner,
-    .browse-list::-webkit-scrollbar-corner {
-      background: transparent;
+      width: 0;
+      height: 0;
+      display: none;
     }
     .scroll-frame {
       border: 1px solid var(--line);
@@ -84,9 +60,8 @@
     }
     .scroll-body {
       overflow: auto;
-      scrollbar-width: thin;
-      scrollbar-color: rgba(124, 224, 255, 0.5) rgba(11, 18, 28, 0.72);
-      scrollbar-gutter: stable both-edges;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
     }
     .shell {
       max-width: 1450px;
@@ -127,6 +102,19 @@
     }
     .hero-logo {
       margin: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+    .hero-logo-mark {
+      width: clamp(40px, 4vw, 56px);
+      height: clamp(40px, 4vw, 56px);
+      flex: 0 0 auto;
+      display: block;
+      filter: drop-shadow(0 0 18px rgba(124, 224, 255, 0.14));
+    }
+    .hero-logo-text {
       color: var(--accent);
       font-size: clamp(24px, 3vw, 40px);
       font-weight: 700;
@@ -739,6 +727,65 @@
       opacity: 0.55;
       cursor: not-allowed;
     }
+    .stats-toolbar {
+      display: flex;
+      align-items: end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .stats-period {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .stats-period label {
+      margin: 0;
+      color: var(--soft);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    #statsPanel .select-trigger,
+    #statsPanel button.secondary {
+      min-height: 40px;
+      border-radius: 12px;
+      font-size: 12px;
+    }
+    #statsPanel .select-trigger {
+      min-width: 148px;
+      padding: 10px 38px 10px 12px;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .stats-card {
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(124, 224, 255, 0.16);
+      background:
+        linear-gradient(180deg, rgba(15, 28, 42, 0.94), rgba(9, 18, 28, 0.9));
+      display: grid;
+      gap: 6px;
+    }
+    .stats-card-label {
+      color: var(--soft);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .stats-card-value {
+      color: var(--text);
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: 0.02em;
+    }
+    .stats-card-note {
+      color: var(--soft);
+      font-size: 12px;
+    }
     .logging-list-wrap {
       background: rgba(7, 14, 22, 0.58);
     }
@@ -917,6 +964,28 @@
       border-color: rgba(151, 255, 63, 0.46);
       color: #eeffd8;
       background: linear-gradient(135deg, rgba(151, 255, 63, 0.16), rgba(151, 255, 63, 0.07));
+    }
+    .pill-last-run-warning {
+      border-color: rgba(255, 204, 84, 0.42);
+      color: #ffe09a;
+      background: linear-gradient(135deg, rgba(255, 204, 84, 0.14), rgba(255, 204, 84, 0.05));
+      box-shadow: inset 0 0 0 1px rgba(255, 204, 84, 0.08);
+    }
+    .pill-last-run-error {
+      border-color: rgba(255, 90, 104, 0.42);
+      color: #ffb6bc;
+      background: linear-gradient(135deg, rgba(255, 90, 104, 0.14), rgba(255, 90, 104, 0.05));
+      box-shadow: inset 0 0 0 1px rgba(255, 90, 104, 0.08);
+    }
+    .job-card.selected .pill-last-run-warning {
+      border-color: rgba(255, 204, 84, 0.54);
+      color: #ffebbe;
+      background: linear-gradient(135deg, rgba(255, 204, 84, 0.18), rgba(255, 204, 84, 0.08));
+    }
+    .job-card.selected .pill-last-run-error {
+      border-color: rgba(255, 90, 104, 0.54);
+      color: #ffd0d4;
+      background: linear-gradient(135deg, rgba(255, 90, 104, 0.18), rgba(255, 90, 104, 0.08));
     }
     .status-toggle {
       min-width: 92px;
@@ -1272,7 +1341,10 @@
   <div class="shell">
     <section class="hero">
       <div class="hero-top">
-        <div class="hero-logo">Rclone командер</div>
+        <div class="hero-logo">
+          <img class="hero-logo-mark" src="/favicon.svg" alt="Rclone командер" />
+          <span class="hero-logo-text">Rclone командер</span>
+        </div>
         <p class="hero-message" id="messagePanel" role="status" aria-live="polite"></p>
       </div>
       <div class="hero-actions">
@@ -1281,6 +1353,7 @@
         </div>
         <button id="cloudsToggle" onclick="toggleClouds()">Облака</button>
         <button id="queuesToggle" onclick="toggleQueues()">Очереди</button>
+        <button id="statsToggle" onclick="toggleStatistics()">Статистика</button>
         <button id="watcherToggle" onclick="toggleWatcher()">Наблюдатель</button>
         <button id="gotifyToggle" onclick="toggleGotify()">Уведомления</button>
       </div>
@@ -1676,6 +1749,31 @@
 
         </section>
 
+        <section class="panel" id="statsPanel" hidden>
+          <div class="token-card" style="padding:0; border:none; background:none;">
+            <div class="panel-header" style="margin-bottom:12px;">
+              <div>
+                <div class="eyebrow">Статистика</div>
+              </div>
+              <div class="stats-toolbar">
+                <div class="stats-period">
+                  <label for="statsPeriod">Период</label>
+                  <select id="statsPeriod">
+                    <option value="day">День</option>
+                    <option value="week" selected>Неделя</option>
+                    <option value="month">Месяц</option>
+                    <option value="year">Год</option>
+                  </select>
+                </div>
+                <button class="secondary" type="button" onclick="refreshStatisticsSummary()">Обновить</button>
+              </div>
+            </div>
+            <div class="logging-summary" id="statsSummary">Статистика ещё не загружалась.</div>
+            <div class="stats-grid" id="statsGrid"></div>
+            <div class="field-meta" id="statsRetentionNote"></div>
+          </div>
+        </section>
+
         <section class="panel" id="loggingPanel" hidden>
           <div class="token-card" style="padding:0; border:none; background:none;">
             <div>
@@ -1843,6 +1941,7 @@
       queues: { allow_parallel_profiles: false, allow_scheduler_queueing: false, allow_event_queueing: false, definitions: [] },
       bandwidth: { limit: null },
       logging: { rclone_log_enabled: false, auto_rclone_log_enabled: false, auto_rclone_log_threshold: 3 },
+      stats: { period: "week", summary: null },
       rcloneLogs: [],
       selectedRcloneLogStepId: null,
       selectedRcloneLogDetail: null,
@@ -1852,6 +1951,7 @@
       showClouds: false,
       showGotify: false,
       showQueues: false,
+      showStats: false,
       showLogging: false,
       showWatcher: false,
       creatingNewJob: false,
@@ -1898,19 +1998,19 @@
     ]);
     const bandwidthPresets = [
       { value: "", label: "Без лимита" },
-      { value: "1250000B", label: "10 Mbps" },
-      { value: "6250000B", label: "50 Mbps" },
-      { value: "12500000B", label: "100 Mbps" },
-      { value: "31250000B", label: "250 Mbps" },
-      { value: "87500000B", label: "700 Mbps" },
+      { value: "1250000B", label: "10 Мбит" },
+      { value: "6250000B", label: "50 Мбит" },
+      { value: "12500000B", label: "100 Мбит" },
+      { value: "31250000B", label: "250 Мбит" },
+      { value: "87500000B", label: "700 Мбит" },
     ];
     const queueBandwidthPresets = [
       { value: "", label: "Глобальный лимит" },
-      { value: "1250000B", label: "10 Mbps" },
-      { value: "6250000B", label: "50 Mbps" },
-      { value: "12500000B", label: "100 Mbps" },
-      { value: "31250000B", label: "250 Mbps" },
-      { value: "87500000B", label: "700 Mbps" },
+      { value: "1250000B", label: "10 Мбит" },
+      { value: "6250000B", label: "50 Мбит" },
+      { value: "12500000B", label: "100 Мбит" },
+      { value: "31250000B", label: "250 Мбит" },
+      { value: "87500000B", label: "700 Мбит" },
     ];
     const weekdayGrid = document.getElementById("weekdayGrid");
     weekdayGrid.innerHTML = weekdayLabels.map((label, index) => `
@@ -2077,6 +2177,18 @@
       const minutes = String(parsed.getMinutes()).padStart(2, "0");
       const seconds = String(parsed.getSeconds()).padStart(2, "0");
       return `${day} ${monthLabel} ${hours}:${minutes}:${seconds}`;
+    }
+
+    function formatRunDisplayId(runId) {
+      const value = Number(runId);
+      if (!Number.isFinite(value) || value <= 0) return String(runId || "0");
+      return String(((Math.floor(value) - 1) % 999) + 1);
+    }
+
+    function formatInteger(value) {
+      const numeric = Number(value || 0);
+      if (!Number.isFinite(numeric)) return "0";
+      return new Intl.NumberFormat("ru-RU").format(Math.round(numeric));
     }
 
     function formatTriggerLabel(run) {
@@ -2320,7 +2432,7 @@
         const fillClass = percent === null ? "copy-progress-fill indeterminate" : "copy-progress-fill";
         const fillStyle = percent === null ? "" : `style="width:${percent}%"`;
         const statusLabel = item.status === "paused" ? "paused" : (item.status === "running" ? "running" : "queued");
-        const subtitle = [`run #${item.run_id}`, item.profile, item.transfer_mode].filter(Boolean).join(" • ");
+        const subtitle = [`run #${formatRunDisplayId(item.run_id)}`, item.profile, item.transfer_mode].filter(Boolean).join(" • ");
         const meta = copyProgressSummary(item);
         const antiBotDelay = item.delayed_by_antibot ? antiBotDelayLabel(state.lastSnapshot?.next_copy_start_at) : "";
         const progressValue = percent === null ? "..." : `${percent}%`;
@@ -2983,6 +3095,67 @@
       updateRunsLayout();
     }
 
+    function renderStatsPanel() {
+      const panel = document.getElementById("statsPanel");
+      const toggle = document.getElementById("statsToggle");
+      const select = document.getElementById("statsPeriod");
+      const summaryNode = document.getElementById("statsSummary");
+      const grid = document.getElementById("statsGrid");
+      const retentionNode = document.getElementById("statsRetentionNote");
+      if (!panel || !toggle || !select || !summaryNode || !grid || !retentionNode) return;
+
+      panel.hidden = !state.showStats;
+      toggle.classList.toggle("is-active", state.showStats);
+      select.value = state.stats?.period || "week";
+      refreshCustomSelect(select);
+
+      const summary = state.stats?.summary || null;
+      if (!summary) {
+        summaryNode.textContent = "Статистика ещё не загружалась.";
+        grid.innerHTML = "";
+        retentionNode.textContent = "";
+        updateRunsLayout();
+        return;
+      }
+
+      const runs = summary.runs || {};
+      const transfer = summary.transfer || {};
+      const unsuccessful = Number(runs.unsuccessful || 0);
+      summaryNode.textContent = `${summary.period_label || "Период"} • запусков ${formatInteger(runs.total || 0)}.`;
+      grid.innerHTML = [
+        { label: "Удачные", value: formatInteger(runs.succeeded || 0), note: "запуски без ошибок" },
+        { label: "Неудачные", value: formatInteger(unsuccessful), note: "ошибки и остановки" },
+        { label: "Остановлены", value: formatInteger(runs.stopped || 0), note: "остановлены вручную или системой" },
+        {
+          label: "Средняя скорость",
+          value: formatMegabitsPerSecondValue(transfer.average_speed_bytes_per_second || 0, true),
+          note: "по шагам copy/sync за период",
+        },
+        {
+          label: "Трафик",
+          value: formatFileSize(transfer.traffic_bytes || 0),
+          note: `учтено шагов: ${formatInteger(transfer.sampled_steps || 0)}`,
+        },
+        {
+          label: "Файлы",
+          value: formatInteger(transfer.files || 0),
+          note: `учтено шагов: ${formatInteger(transfer.sampled_file_steps || 0)}`,
+        },
+      ].map((item) => `
+        <article class="stats-card">
+          <div class="stats-card-label">${escapeHtml(item.label)}</div>
+          <div class="stats-card-value">${escapeHtml(item.value)}</div>
+          <div class="stats-card-note">${escapeHtml(item.note)}</div>
+        </article>
+      `).join("");
+
+      const lastPruned = summary.retention?.last_pruned_at
+        ? formatRunTimestamp(summary.retention.last_pruned_at)
+        : "ещё не выполнялась";
+      retentionNode.textContent = `Автоочистка истории и step-логов старше ${formatInteger(summary.retention?.history_days || 365)} дней включена. Последняя очистка: ${lastPruned}.`;
+      updateRunsLayout();
+    }
+
     function renderLoggingPanel() {
       const panel = document.getElementById("loggingPanel");
       const toggle = document.getElementById("loggingToggle");
@@ -2999,6 +3172,28 @@
       renderRcloneLogBrowser();
       renderHeroStatusIndicators();
       updateRunsLayout();
+    }
+
+    async function refreshStatisticsSummary({ silent = false } = {}) {
+      try {
+        const period = String(document.getElementById("statsPeriod")?.value || state.stats?.period || "week");
+        const response = await fetch(`/api/stats/summary?period=${encodeURIComponent(period)}`);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || "statistics failed");
+        state.stats = {
+          period: payload.period || period,
+          summary: payload,
+        };
+        renderStatsPanel();
+        if (!silent) {
+          setToast(`Статистика обновлена: ${payload.period_label || period}.`, "ok");
+        }
+      } catch (error) {
+        if (!silent) {
+          setToast(error.message || "Ошибка загрузки статистики", "error");
+        }
+        throw error;
+      }
     }
 
     function watcherEnabledJobs() {
@@ -3134,6 +3329,14 @@
     function formatFileSize(bytes) {
       const value = Number(bytes || 0);
       if (!Number.isFinite(value) || value <= 0) return "0 Б";
+      if (value >= 1000 ** 4) {
+        const amount = value / (1000 ** 4);
+        return `${amount.toFixed(amount >= 100 ? 0 : 2).replace(".", ",")} ТБ`;
+      }
+      if (value >= 1000 ** 3) {
+        const amount = value / (1000 ** 3);
+        return `${amount.toFixed(amount >= 100 ? 0 : 2).replace(".", ",")} ГБ`;
+      }
       if (value >= 1000 ** 2) {
         const amount = value / (1000 ** 2);
         return `${amount.toFixed(amount >= 100 ? 0 : 2).replace(".", ",")} МБ`;
@@ -3150,10 +3353,12 @@
       state.showClouds = false;
       state.showGotify = false;
       state.showQueues = false;
+      state.showStats = false;
       state.showWatcher = false;
       renderCloudsPanel();
       renderGotifyPanel();
       renderQueuesPanel();
+      renderStatsPanel();
       renderWatcherPanel();
       state.showLogging = true;
       renderLoggingPanel();
@@ -3224,7 +3429,7 @@
           <tr class="log-browser-row ${Number(item.step_id) === Number(state.selectedRcloneLogStepId) ? "is-selected" : ""}">
             <td>${formatMetricTimestamp(item.started_at || item.requested_at || item.log_updated_at)}</td>
             <td>${escapeHtml(item.title || item.job_key || "job")}</td>
-            <td>#${escapeHtml(String(item.run_id || ""))}</td>
+            <td>#${escapeHtml(formatRunDisplayId(item.run_id))}</td>
             <td>${escapeHtml(String(item.step_order || ""))}</td>
             <td class="${statusClass(item.status)}">${escapeHtml(String(item.status || ""))}</td>
             <td>${escapeHtml(formatRcloneLogMode(item.log_mode))}</td>
@@ -3251,7 +3456,7 @@
 
       viewerMeta.textContent = [
         selected.title || selected.job_key || `step #${selected.step_id}`,
-        `run #${selected.run_id}`,
+        `run #${formatRunDisplayId(selected.run_id)}`,
         `step #${selected.step_order}`,
         selected.log_path || "",
       ].filter(Boolean).join(" • ");
@@ -3286,7 +3491,7 @@
     function renderRuns(runs) {
       document.getElementById("runsBody").innerHTML = runs.map((run) => `
         <tr>
-          <td><button type="button" class="run-link" onclick="showRunDetails(${run.id})">${run.id}</button></td>
+          <td><button type="button" class="run-link" onclick="showRunDetails(${run.id})">${escapeHtml(formatRunDisplayId(run.id))}</button></td>
           <td class="${statusClass(run.status)}">${run.status}</td>
           <td>${escapeHtml(run.job_key || "—")}</td>
           <td>${escapeHtml(formatTriggerLabel(run))}</td>
@@ -3297,6 +3502,13 @@
           </td>
         </tr>
       `).join("");
+    }
+
+    function lastRunPillClass(job) {
+      const status = String(job?.last_run_status || "").trim().toLowerCase();
+      if (status === "failed") return "pill-last-run-error";
+      if (status === "stopped") return "pill-last-run-warning";
+      return "";
     }
 
     function commandPreview(job) {
@@ -3538,14 +3750,14 @@
             <button type="button" class="pill status-toggle ${job.enabled ? "enabled" : "disabled"}" onclick="toggleJobEnabled(event, '${job.key}')">${job.enabled ? "enabled" : "disabled"}</button>
           </div>
           <div class="pill-row">
+            <div class="pill ${lastRunPillClass(job)}">${job.last_run_started_at || job.last_run_requested_at ? `${escapeHtml(formatMetricTimestamp(job.last_run_started_at || job.last_run_requested_at))}` : "не запускалась"}</div>
+            ${job.kind === "backup" && job.retention?.enabled && job.retention?.min_age ? `<div class="pill pill-retention">retention ${escapeHtml(job.retention.min_age)}</div>` : ""}
             ${job.kind !== "backup" ? `<div class="pill">команда</div>` : ""}
             ${job.kind === "backup" ? `<div class="pill">${job.transfer_mode}</div>` : ""}
             ${job.kind === "backup" && job.watcher_enabled ? `<div class="pill">watcher</div>` : ""}
-            ${job.kind === "backup" && job.retention?.enabled && job.retention?.min_age ? `<div class="pill pill-retention">retention ${escapeHtml(job.retention.min_age)}</div>` : ""}
             <div class="pill">${job.profile}</div>
             ${!(job.kind === "backup" && job.watcher_enabled && job.schedule_summary === "manual") ? `<div class="pill">${job.schedule_summary}</div>` : ""}
             <div class="pill">timeout ${job.timeout_seconds}s</div>
-            <div class="pill">${job.last_run_started_at || job.last_run_requested_at ? `${escapeHtml(formatMetricTimestamp(job.last_run_started_at || job.last_run_requested_at))}` : "не запускалась"}</div>
           </div>
         </article>
       `).join("");
@@ -3564,10 +3776,12 @@
         closeJobEditor();
         state.showGotify = false;
         state.showQueues = false;
+        state.showStats = false;
         state.showLogging = false;
         state.showWatcher = false;
         renderGotifyPanel();
         renderQueuesPanel();
+        renderStatsPanel();
         renderLoggingPanel();
         renderWatcherPanel();
       }
@@ -3582,6 +3796,8 @@
         renderCloudsPanel();
         state.showQueues = false;
         renderQueuesPanel();
+        state.showStats = false;
+        renderStatsPanel();
         state.showLogging = false;
         renderLoggingPanel();
         state.showWatcher = false;
@@ -3598,12 +3814,35 @@
         renderCloudsPanel();
         state.showGotify = false;
         renderGotifyPanel();
+        state.showStats = false;
+        renderStatsPanel();
         state.showLogging = false;
         renderLoggingPanel();
         state.showWatcher = false;
         renderWatcherPanel();
       }
       renderQueuesPanel();
+    }
+
+    function toggleStatistics() {
+      state.showStats = !state.showStats;
+      if (state.showStats) {
+        closeJobEditor();
+        state.showClouds = false;
+        renderCloudsPanel();
+        state.showGotify = false;
+        renderGotifyPanel();
+        state.showQueues = false;
+        renderQueuesPanel();
+        state.showLogging = false;
+        renderLoggingPanel();
+        state.showWatcher = false;
+        renderWatcherPanel();
+        renderStatsPanel();
+        refreshStatisticsSummary({ silent: true }).catch((error) => setToast(error.message || "Ошибка загрузки статистики", "error"));
+        return;
+      }
+      renderStatsPanel();
     }
 
     function toggleLogging() {
@@ -3626,6 +3865,8 @@
         renderGotifyPanel();
         state.showQueues = false;
         renderQueuesPanel();
+        state.showStats = false;
+        renderStatsPanel();
         state.showLogging = false;
         renderLoggingPanel();
       }
@@ -3822,13 +4063,39 @@
       renderJobs();
     }
 
-    function toggleJobEnabled(event, key) {
+    async function toggleJobEnabled(event, key) {
       event.stopPropagation();
-      const job = state.jobs.find((item) => item.key === key);
-      if (!job) return;
-      job.enabled = !job.enabled;
-      renderJobs();
-      setToast(`Задача ${key} ${job.enabled ? "включена" : "выключена"} локально. Теперь сохраните каталог.`, "ok");
+      const previousJobs = state.jobs.map((item) => ({ ...item }));
+      const previousEditingKey = state.editingKey;
+      try {
+        syncEditingJobIntoState();
+        const job = state.jobs.find((item) => item.key === key);
+        if (!job) return;
+        job.enabled = !job.enabled;
+        renderJobs();
+        await persistJobsState(`Задача ${key} ${job.enabled ? "включена" : "выключена"}.`);
+      } catch (error) {
+        state.jobs = previousJobs;
+        state.editingKey = previousEditingKey;
+        renderJobs();
+        const restored = state.jobs.find((item) => item.key === previousEditingKey);
+        fillForm(restored || null);
+        setToast(error.message || "Ошибка в форме", "error");
+      }
+    }
+
+    function syncEditingJobIntoState() {
+      const editorHidden = document.getElementById("editorPanel").hidden;
+      if (editorHidden || !state.editingKey) return;
+      const currentJob = collectFormJob();
+      const existingIndex = state.jobs.findIndex((item) => item.key === state.editingKey || item.key === currentJob.key);
+      if (existingIndex >= 0) {
+        state.jobs.splice(existingIndex, 1, currentJob);
+      } else {
+        state.jobs.push(currentJob);
+      }
+      state.jobs.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+      state.editingKey = currentJob.key;
     }
 
     function collectFormJob() {
@@ -3901,6 +4168,10 @@
       if (job && state.showQueues) {
         state.showQueues = false;
         renderQueuesPanel();
+      }
+      if (job && state.showStats) {
+        state.showStats = false;
+        renderStatsPanel();
       }
       if (job && state.showLogging) {
         state.showLogging = false;
@@ -4437,7 +4708,7 @@
         });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.detail || "request failed");
-        setToast(`Профиль ${profile} поставлен в очередь: run #${payload.run_id}`, "ok");
+        setToast(`Профиль ${profile} поставлен в очередь: run #${formatRunDisplayId(payload.run_id)}`, "ok");
         refreshAll();
       } catch (error) {
         setToast(error.message || "Ошибка запуска профиля", "error");
@@ -4471,7 +4742,7 @@
         });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.detail || "request failed");
-        setToast(`Задача ${key} поставлена в очередь: run #${payload.run_id}`, "ok");
+        setToast(`Задача ${key} поставлена в очередь: run #${formatRunDisplayId(payload.run_id)}`, "ok");
         refreshAll();
       } catch (error) {
         setToast(error.message || "Ошибка запуска задачи", "error");
@@ -4523,7 +4794,7 @@
         const run = payload.run || {};
         const steps = Array.isArray(payload.steps) ? payload.steps : [];
         const header = [
-          `run #${run.id}`,
+          `run #${formatRunDisplayId(run.id)}`,
           `status: ${run.status || "-"}`,
           `profile: ${run.profile || "-"}`,
           `trigger: ${formatTriggerLabel(run)}`,
@@ -4732,6 +5003,9 @@
       renderStatus(snapshot);
       renderCopyProgress(snapshot.copy_progress || [], snapshot.active_operations || []);
       renderRuns(snapshot.latest_runs || []);
+      if (state.showStats) {
+        refreshStatisticsSummary({ silent: true }).catch(() => {});
+      }
       if (state.showLogging) {
         refreshRcloneLogs({ silent: true }).catch(() => {});
       }
@@ -4760,6 +5034,7 @@
         renderCloudsPanel();
         renderGotifyPanel();
         renderQueuesPanel();
+        renderStatsPanel();
         renderLoggingPanel();
         renderWatcherPanel();
         if (!state.editingKey) {
@@ -4810,6 +5085,13 @@
     });
     ["rcloneLogFilterJob", "rcloneLogFilterStatus", "rcloneLogFilterTrigger"].forEach((id) => {
       document.getElementById(id).addEventListener("change", () => renderLoggingPanel());
+    });
+    document.getElementById("statsPeriod").addEventListener("change", (event) => {
+      state.stats = {
+        ...state.stats,
+        period: String(event.target.value || "week"),
+      };
+      refreshStatisticsSummary({ silent: true }).catch((error) => setToast(error.message || "Ошибка загрузки статистики", "error"));
     });
     document.addEventListener("click", (event) => {
       if (!event.target.closest(".select-shell")) {
@@ -4892,7 +5174,7 @@
       );
     });
 
-    document.querySelectorAll(".editor select, #globalBandwidthLimit, #loggingPanel select").forEach((select) => initCustomSelect(select));
+    document.querySelectorAll(".editor select, #globalBandwidthLimit, #loggingPanel select, #statsPanel select").forEach((select) => initCustomSelect(select));
     refreshAll();
     setInterval(() => {
       refreshAntiBotMetric();

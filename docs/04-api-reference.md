@@ -23,6 +23,7 @@
 | `GET` | `/api/health` | Проверка доступности сервиса |
 | `GET` | `/api/state` | Общее состояние, очереди, workers, последние запуски и флаг `token_required` |
 | `GET` | `/api/jobs` | Полный рабочий каталог: профили, очереди, Gotify, bandwidth, logging, watcher, clouds и jobs |
+| `GET` | `/api/stats/summary` | Сводная статистика запусков и передачи за выбранный период |
 
 ### Важные поля `GET /api/state`
 
@@ -33,6 +34,19 @@
 - `latest_runs` — последние запуски
 - `backup_jobs` — backup-задачи каталога
 - `watcher` — runtime-статус встроенного наблюдателя
+
+### Query params `GET /api/stats/summary`
+
+- `period` — `day`, `week`, `month`, `year`
+
+### Важные поля `GET /api/stats/summary`
+
+- `runs.succeeded`, `runs.failed`, `runs.stopped`, `runs.unsuccessful`, `runs.total`
+- `transfer.traffic_bytes`
+- `transfer.files`
+- `transfer.average_speed_bytes_per_second`
+- `retention.history_days`
+- `retention.last_pruned_at`
 
 ---
 

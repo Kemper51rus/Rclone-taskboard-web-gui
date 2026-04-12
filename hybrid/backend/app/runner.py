@@ -9,6 +9,8 @@ import threading
 import time
 from typing import Any, Callable
 
+from .rclone_metrics import extract_file_counts
+
 
 @dataclass(frozen=True)
 class CommandResult:
@@ -226,6 +228,9 @@ class CommandRunner:
             "speed": speed_match.group(1).strip() if speed_match else None,
             "eta": eta_match.group(1).strip() if eta_match else None,
         }
+        file_count, file_total = extract_file_counts(compact)
+        progress["file_count"] = file_count
+        progress["file_total"] = file_total
         if not any(progress.get(key) is not None for key in ("transferred", "total", "percent", "speed", "eta")):
             return None
         return progress

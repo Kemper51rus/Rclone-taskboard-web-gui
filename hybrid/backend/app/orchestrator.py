@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 import logging
 from pathlib import Path
 import queue
-import re
 import threading
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -21,6 +20,11 @@ from .domain import (
 )
 from .gotify import GotifyClient
 from .locks import file_lock
+from .rclone_metrics import (
+    extract_transfer_metrics,
+    parse_data_size_to_bytes,
+    read_latest_log_progress,
+)
 from .runner import CommandRunner
 from .storage import Storage
 
@@ -30,13 +34,8 @@ COPY_LAST_STARTED_AT_STATE_KEY = "copy_last_started_at"
 AUTO_LOG_ENABLED_STATE_PREFIX = "job_auto_rclone_log_enabled:"
 AUTO_LOG_FAILURE_STREAK_STATE_PREFIX = "job_auto_rclone_log_failure_streak:"
 AUTO_LOG_SUCCESS_STREAK_STATE_PREFIX = "job_auto_rclone_log_success_streak:"
-DATA_SIZE_RE = re.compile(r"^([0-9]+(?:[.,][0-9]+)?)\s*([KMGTPE]?i?B)$", re.IGNORECASE)
-RCLONE_LOG_STATS_RE = re.compile(
-    r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} INFO\s+:\s+(.+?) / (.+?),\s+([0-9-]+)%,\s+([^,]+),\s+ETA\s+(.+?)(?:\s+\(xfr#.*\))?$"
-)
-RCLONE_LOG_ZERO_RE = re.compile(
-    r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} INFO\s+:\s+(.+?) / (.+?),\s+-\s*,\s+([^,]+),\s+ETA\s+(.+)$"
-)
+RUN_HISTORY_RETENTION_DAYS = 365
+RUN_HISTORY_LAST_PRUNED_AT_STATE_KEY = "run_history_last_pruned_at"
 
 
 class Orchestrator:
@@ -69,6 +68,7 @@ class Orchestrator:
             return
 
         self._stop_event.clear()
+        self._maybe_prune_run_history()
         self._copy_starts_allowed_after = datetime.now(timezone.utc) + timedelta(
             seconds=self.settings.copy_startup_delay_seconds
         )
@@ -502,6 +502,7 @@ class Orchestrator:
                 exit_code=result.exit_code,
                 stdout_tail=result.stdout_tail,
                 stderr_tail=result.stderr_tail,
+                **self._step_transfer_metrics(step_id=step_id, run_id=run_id),
             )
             self._update_job_auto_rclone_log_state(step=step, status=result.status)
             self._notify_for_step(run=run, step=step, result=result)
@@ -573,12 +574,13 @@ class Orchestrator:
                 continue
             progress = step.get("progress") or {}
             if step.get("log_mode") and not progress and step.get("status") == "running":
-                progress = self._read_progress_from_rclone_log(
+                progress = read_latest_log_progress(
                     started_at_raw=step.get("started_at"),
                     log_path=self._step_rclone_log_path(
                         run_id=int(step["run_id"]),
                         step_id=int(step["id"]),
                     ),
+                    timezone_name=self.settings.timezone,
                 )
             effective_status = "paused" if self.runner.is_paused(int(step["id"])) else step["status"]
             items.append(
@@ -688,61 +690,6 @@ class Orchestrator:
             )
         return items
 
-    def _read_progress_from_rclone_log(self, started_at_raw: str | None, log_path: Path) -> dict[str, Any]:
-        if not started_at_raw or not log_path.exists():
-            return {}
-        try:
-            started_at_utc = datetime.fromisoformat(started_at_raw)
-            local_tz = ZoneInfo(self.settings.timezone)
-            started_at_local = started_at_utc.astimezone(local_tz).replace(tzinfo=None)
-            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
-        except Exception:
-            return {}
-
-        latest: dict[str, Any] = {}
-        for line in lines:
-            parsed = self._parse_rclone_log_progress_line(line)
-            if not parsed:
-                continue
-            line_time = parsed.pop("line_time", None)
-            if line_time and line_time < started_at_local:
-                continue
-            latest = parsed
-        return latest
-
-    @staticmethod
-    def _parse_rclone_log_progress_line(line: str) -> dict[str, Any] | None:
-        prefix = line[:19]
-        try:
-            line_time = datetime.strptime(prefix, "%Y/%m/%d %H:%M:%S")
-        except ValueError:
-            return None
-        match = RCLONE_LOG_STATS_RE.match(line)
-        if match:
-            transferred, total, percent, speed, eta = match.groups()
-            return {
-                "line_time": line_time,
-                "raw_line": line.strip(),
-                "transferred": transferred.strip(),
-                "total": total.strip(),
-                "percent": int(percent),
-                "speed": speed.strip(),
-                "eta": eta.strip(),
-            }
-        match = RCLONE_LOG_ZERO_RE.match(line)
-        if match:
-            transferred, total, speed, eta = match.groups()
-            return {
-                "line_time": line_time,
-                "raw_line": line.strip(),
-                "transferred": transferred.strip(),
-                "total": total.strip(),
-                "percent": None,
-                "speed": speed.strip(),
-                "eta": eta.strip(),
-            }
-        return None
-
     @staticmethod
     def _parse_speed_bytes_per_second(raw_value: str) -> float | None:
         normalized = str(raw_value or "").strip()
@@ -750,30 +697,36 @@ class Orchestrator:
             return None
         if normalized.lower().endswith("/s"):
             normalized = normalized[:-2].strip()
-        match = DATA_SIZE_RE.match(normalized)
-        if not match:
-            return None
-        amount = float(match.group(1).replace(",", "."))
-        unit = match.group(2).upper()
-        factors = {
-            "B": 1,
-            "KB": 1000,
-            "MB": 1000**2,
-            "GB": 1000**3,
-            "TB": 1000**4,
-            "PB": 1000**5,
-            "EB": 1000**6,
-            "KIB": 1024,
-            "MIB": 1024**2,
-            "GIB": 1024**3,
-            "TIB": 1024**4,
-            "PIB": 1024**5,
-            "EIB": 1024**6,
-        }
-        factor = factors.get(unit)
-        if factor is None:
-            return None
-        return amount * factor
+        parsed = parse_data_size_to_bytes(normalized)
+        return float(parsed) if parsed is not None else None
+
+    def _step_transfer_metrics(self, *, step_id: int, run_id: int) -> dict[str, int | None]:
+        step = self.storage.get_run_step(step_id)
+        if not step:
+            return {
+                "transferred_bytes": None,
+                "total_bytes": None,
+                "file_count": None,
+                "file_total": None,
+            }
+        command = step.get("command") or []
+        if not command or str(command[0]).strip() != "rclone":
+            return {
+                "transferred_bytes": None,
+                "total_bytes": None,
+                "file_count": None,
+                "file_total": None,
+            }
+        return extract_transfer_metrics(
+            progress=step.get("progress"),
+            log_path=(
+                self._step_rclone_log_path(run_id=run_id, step_id=step_id)
+                if step.get("log_mode")
+                else None
+            ),
+            started_at_raw=step.get("started_at"),
+            timezone_name=self.settings.timezone,
+        )
 
     def _step_rclone_log_mode(self, step: dict[str, Any]) -> str | None:
         if self.catalog.logging.rclone_log_enabled:
@@ -960,6 +913,7 @@ class Orchestrator:
         while not self._stop_event.is_set():
             now_local = datetime.now(timezone)
             try:
+                self._maybe_prune_run_history()
                 self._maybe_schedule_jobs(now_local)
             except Exception:
                 logger.exception("scheduler tick failed")
@@ -1001,6 +955,46 @@ class Orchestrator:
             if job.profile == "heavy":
                 self.storage.set_state("scheduler_last_heavy_day", schedule_slot)
             logger.info("scheduled job %s: %s", job.key, run_id)
+
+    def _maybe_prune_run_history(self) -> None:
+        now = datetime.now(timezone.utc)
+        last_pruned_raw = self.storage.get_state(RUN_HISTORY_LAST_PRUNED_AT_STATE_KEY)
+        if last_pruned_raw:
+            try:
+                last_pruned_at = datetime.fromisoformat(last_pruned_raw)
+                if (now - last_pruned_at).total_seconds() < 24 * 3600:
+                    return
+            except ValueError:
+                pass
+
+        cutoff = now - timedelta(days=RUN_HISTORY_RETENTION_DAYS)
+        result = self.storage.prune_finished_run_history_before(cutoff.isoformat())
+        self.storage.set_state(RUN_HISTORY_LAST_PRUNED_AT_STATE_KEY, now.isoformat())
+        removed_logs = self._prune_old_rclone_logs(cutoff=cutoff)
+        if result["runs_deleted"] or result["steps_deleted"] or removed_logs:
+            logger.info(
+                "pruned run history older than %s: runs=%s steps=%s logs=%s",
+                cutoff.isoformat(),
+                result["runs_deleted"],
+                result["steps_deleted"],
+                removed_logs,
+            )
+
+    def _prune_old_rclone_logs(self, *, cutoff: datetime) -> int:
+        logs_dir = self.settings.app_root / "data" / "rclone-logs"
+        if not logs_dir.exists():
+            return 0
+        cutoff_ts = cutoff.timestamp()
+        removed = 0
+        for path in logs_dir.glob("*.log"):
+            try:
+                if path.stat().st_mtime >= cutoff_ts:
+                    continue
+                path.unlink(missing_ok=True)
+                removed += 1
+            except OSError:
+                logger.warning("failed to prune old rclone log %s", path)
+        return removed
 
     def _step_needs_copy_gate(self, step: dict[str, Any]) -> bool:
         if step.get("step_kind") != "job":

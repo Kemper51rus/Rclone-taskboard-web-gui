@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS run_steps (
     progress_updated_at TEXT,
     stdout_tail TEXT,
     stderr_tail TEXT,
+    transferred_bytes INTEGER,
+    total_bytes INTEGER,
+    file_count INTEGER,
+    file_total INTEGER,
     FOREIGN KEY(run_id) REFERENCES runs(id),
     UNIQUE(run_id, step_order)
 );
@@ -107,6 +111,30 @@ class Storage:
                     table="run_steps",
                     column="log_mode",
                     definition="TEXT",
+                )
+                self._ensure_column(
+                    conn,
+                    table="run_steps",
+                    column="transferred_bytes",
+                    definition="INTEGER",
+                )
+                self._ensure_column(
+                    conn,
+                    table="run_steps",
+                    column="total_bytes",
+                    definition="INTEGER",
+                )
+                self._ensure_column(
+                    conn,
+                    table="run_steps",
+                    column="file_count",
+                    definition="INTEGER",
+                )
+                self._ensure_column(
+                    conn,
+                    table="run_steps",
+                    column="file_total",
+                    definition="INTEGER",
                 )
                 conn.commit()
 
@@ -306,6 +334,10 @@ class Storage:
         exit_code: int | None,
         stdout_tail: str,
         stderr_tail: str,
+        transferred_bytes: int | None = None,
+        total_bytes: int | None = None,
+        file_count: int | None = None,
+        file_total: int | None = None,
     ) -> None:
         finished_at = utc_now_iso()
         with self._lock:
@@ -314,7 +346,8 @@ class Storage:
                     """
                     UPDATE run_steps
                     SET status = ?, finished_at = ?, duration_seconds = ?, exit_code = ?,
-                        stdout_tail = ?, stderr_tail = ?, progress_updated_at = ?
+                        stdout_tail = ?, stderr_tail = ?, progress_updated_at = ?,
+                        transferred_bytes = ?, total_bytes = ?, file_count = ?, file_total = ?
                     WHERE id = ?
                     """,
                     (
@@ -325,8 +358,33 @@ class Storage:
                         stdout_tail,
                         stderr_tail,
                         finished_at,
+                        transferred_bytes,
+                        total_bytes,
+                        file_count,
+                        file_total,
                         step_id,
                     ),
+                )
+                conn.commit()
+
+    def update_step_statistics(
+        self,
+        step_id: int,
+        *,
+        transferred_bytes: int | None = None,
+        total_bytes: int | None = None,
+        file_count: int | None = None,
+        file_total: int | None = None,
+    ) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE run_steps
+                    SET transferred_bytes = ?, total_bytes = ?, file_count = ?, file_total = ?
+                    WHERE id = ?
+                    """,
+                    (transferred_bytes, total_bytes, file_count, file_total, step_id),
                 )
                 conn.commit()
 
@@ -438,6 +496,59 @@ class Storage:
             "steps_deleted": steps_deleted,
         }
 
+    def prune_finished_run_history_before(self, before_iso: str) -> dict[str, int]:
+        with self._lock:
+            with self._connect() as conn:
+                run_row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM runs
+                    WHERE status NOT IN ('queued', 'running')
+                      AND COALESCE(finished_at, started_at, requested_at) < ?
+                    """,
+                    (before_iso,),
+                ).fetchone()
+                step_row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM run_steps
+                    WHERE run_id IN (
+                        SELECT id
+                        FROM runs
+                        WHERE status NOT IN ('queued', 'running')
+                          AND COALESCE(finished_at, started_at, requested_at) < ?
+                    )
+                    """,
+                    (before_iso,),
+                ).fetchone()
+                runs_deleted = int(run_row["count"]) if run_row else 0
+                steps_deleted = int(step_row["count"]) if step_row else 0
+                conn.execute(
+                    """
+                    DELETE FROM run_steps
+                    WHERE run_id IN (
+                        SELECT id
+                        FROM runs
+                        WHERE status NOT IN ('queued', 'running')
+                          AND COALESCE(finished_at, started_at, requested_at) < ?
+                    )
+                    """,
+                    (before_iso,),
+                )
+                conn.execute(
+                    """
+                    DELETE FROM runs
+                    WHERE status NOT IN ('queued', 'running')
+                      AND COALESCE(finished_at, started_at, requested_at) < ?
+                    """,
+                    (before_iso,),
+                )
+                conn.commit()
+        return {
+            "runs_deleted": runs_deleted,
+            "steps_deleted": steps_deleted,
+        }
+
     def get_run(self, run_id: int) -> dict[str, Any] | None:
         with self._lock:
             with self._connect() as conn:
@@ -472,7 +583,8 @@ class Storage:
                     """
                     SELECT id, run_id, step_order, job_key, step_kind, description, command_json, timeout_seconds,
                            continue_on_error, status, started_at, finished_at, duration_seconds,
-                           exit_code, progress_json, progress_updated_at, stdout_tail, stderr_tail, log_mode
+                           exit_code, progress_json, progress_updated_at, stdout_tail, stderr_tail, log_mode,
+                           transferred_bytes, total_bytes, file_count, file_total
                     FROM run_steps
                     WHERE id = ?
                     """,
@@ -493,7 +605,8 @@ class Storage:
                     """
                     SELECT id, run_id, step_order, job_key, step_kind, description, command_json, timeout_seconds,
                            continue_on_error, status, started_at, finished_at, duration_seconds,
-                           exit_code, progress_json, progress_updated_at, stdout_tail, stderr_tail, log_mode
+                           exit_code, progress_json, progress_updated_at, stdout_tail, stderr_tail, log_mode,
+                           transferred_bytes, total_bytes, file_count, file_total
                     FROM run_steps
                     WHERE run_id = ?
                     ORDER BY step_order ASC
@@ -586,6 +699,71 @@ class Storage:
             command = payload.get("command") or []
             if not command or str(command[0]).strip() != "rclone":
                 continue
+            items.append(payload)
+        return items
+
+    def stats_run_counts_since(self, started_at: str) -> dict[str, int]:
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT status, COUNT(*) AS count
+                    FROM runs
+                    WHERE status NOT IN ('queued', 'running')
+                      AND COALESCE(finished_at, started_at, requested_at) >= ?
+                    GROUP BY status
+                    """,
+                    (started_at,),
+                ).fetchall()
+        counts = {
+            "succeeded": 0,
+            "failed": 0,
+            "stopped": 0,
+        }
+        for row in rows:
+            status = str(row["status"] or "").strip()
+            if status in counts:
+                counts[status] = int(row["count"] or 0)
+        counts["unsuccessful"] = counts["failed"] + counts["stopped"]
+        counts["total"] = counts["succeeded"] + counts["failed"] + counts["stopped"]
+        return counts
+
+    def list_statistics_steps(self, started_at: str) -> list[dict[str, Any]]:
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT
+                        rs.id,
+                        rs.run_id,
+                        rs.job_key,
+                        rs.step_kind,
+                        rs.status,
+                        rs.command_json,
+                        rs.duration_seconds,
+                        rs.progress_json,
+                        rs.log_mode,
+                        rs.started_at,
+                        rs.finished_at,
+                        rs.transferred_bytes,
+                        rs.total_bytes,
+                        rs.file_count,
+                        rs.file_total,
+                        COALESCE(r.finished_at, r.started_at, r.requested_at) AS occurred_at
+                    FROM run_steps rs
+                    JOIN runs r ON r.id = rs.run_id
+                    WHERE r.status NOT IN ('queued', 'running')
+                      AND rs.step_kind = 'job'
+                      AND COALESCE(r.finished_at, r.started_at, r.requested_at) >= ?
+                    ORDER BY occurred_at DESC, rs.id DESC
+                    """,
+                    (started_at,),
+                ).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            payload = dict(row)
+            payload["command"] = json.loads(payload.pop("command_json") or "[]")
+            payload["progress"] = json.loads(payload.pop("progress_json") or "null")
             items.append(payload)
         return items
 

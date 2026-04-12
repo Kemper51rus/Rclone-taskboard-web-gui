@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import configparser
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import threading
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from .config import Settings, load_settings
@@ -30,6 +30,7 @@ from .domain import (
 from .gotify import GotifyClient
 from .jobs_loader import build_profiles, load_catalog, save_catalog
 from .orchestrator import Orchestrator
+from .rclone_metrics import extract_transfer_metrics
 from .runner import CommandRunner
 from .storage import Storage
 from .watcher import FilesystemWatcher
@@ -61,7 +62,16 @@ event_watcher = FilesystemWatcher(
     on_event=orchestrator.enqueue_event,
 )
 DASHBOARD_HTML = Path(__file__).with_name("dashboard.html").read_text(encoding="utf-8")
+APP_LOGO_PATH = Path(__file__).with_name("rclone-commander-logo.svg")
 FS_ROOTS = ["/media", "/srv", "/home", "/root", "/mnt", "/tmp"]
+RUN_HISTORY_RETENTION_DAYS = 365
+RUN_HISTORY_LAST_PRUNED_AT_STATE_KEY = "run_history_last_pruned_at"
+STATS_PERIODS = {
+    "day": ("За день", timedelta(days=1)),
+    "week": ("За неделю", timedelta(days=7)),
+    "month": ("За месяц", timedelta(days=30)),
+    "year": ("За год", timedelta(days=365)),
+}
 
 
 @asynccontextmanager
@@ -161,6 +171,94 @@ def _serialize_rclone_log_item(step: dict[str, Any]) -> dict[str, Any]:
             if log_stat
             else None
         ),
+    }
+
+
+def _statistics_period_bounds(period: str) -> tuple[str, datetime]:
+    normalized = str(period or "week").strip().lower()
+    label, delta = STATS_PERIODS.get(normalized, STATS_PERIODS["week"])
+    started_at = datetime.now(timezone.utc) - delta
+    return label, started_at
+
+
+def _statistics_summary(period: str) -> dict[str, Any]:
+    period_key = str(period or "week").strip().lower()
+    period_label, started_at = _statistics_period_bounds(period_key)
+    started_at_iso = started_at.isoformat()
+    runs = storage.stats_run_counts_since(started_at_iso)
+    steps = storage.list_statistics_steps(started_at_iso)
+    traffic_bytes = 0
+    files_total = 0
+    transfer_duration_seconds = 0.0
+    sampled_steps = 0
+    sampled_file_steps = 0
+
+    for step in steps:
+        command = step.get("command") or []
+        if not command or str(command[0]).strip() != "rclone":
+            continue
+
+        transferred_bytes = step.get("transferred_bytes")
+        total_bytes = step.get("total_bytes")
+        file_count = step.get("file_count")
+        file_total = step.get("file_total")
+        if any(value is None for value in (transferred_bytes, total_bytes, file_count, file_total)):
+            parsed = extract_transfer_metrics(
+                progress=step.get("progress"),
+                log_path=(
+                    _step_rclone_log_path(run_id=int(step["run_id"]), step_id=int(step["id"]))
+                    if step.get("log_mode")
+                    else None
+                ),
+                started_at_raw=step.get("started_at"),
+                timezone_name=settings.timezone,
+            )
+            transferred_bytes = transferred_bytes if transferred_bytes is not None else parsed["transferred_bytes"]
+            total_bytes = total_bytes if total_bytes is not None else parsed["total_bytes"]
+            file_count = file_count if file_count is not None else parsed["file_count"]
+            file_total = file_total if file_total is not None else parsed["file_total"]
+            if any(value is not None for value in (transferred_bytes, total_bytes, file_count, file_total)):
+                storage.update_step_statistics(
+                    int(step["id"]),
+                    transferred_bytes=transferred_bytes,
+                    total_bytes=total_bytes,
+                    file_count=file_count,
+                    file_total=file_total,
+                )
+
+        if transferred_bytes is not None and transferred_bytes > 0:
+            traffic_bytes += int(transferred_bytes)
+            duration = float(step.get("duration_seconds") or 0)
+            if duration > 0:
+                transfer_duration_seconds += duration
+            sampled_steps += 1
+        elif total_bytes is not None and total_bytes > 0:
+            sampled_steps += 1
+
+        effective_file_count = file_count if file_count is not None else file_total
+        if effective_file_count is not None and effective_file_count > 0:
+            files_total += int(effective_file_count)
+            sampled_file_steps += 1
+
+    average_speed = int(traffic_bytes / transfer_duration_seconds) if transfer_duration_seconds > 0 else 0
+    last_pruned_at = storage.get_state(RUN_HISTORY_LAST_PRUNED_AT_STATE_KEY)
+    return {
+        "period": period_key if period_key in STATS_PERIODS else "week",
+        "period_label": period_label,
+        "started_at": started_at_iso,
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "runs": runs,
+        "transfer": {
+            "traffic_bytes": traffic_bytes,
+            "files": files_total,
+            "average_speed_bytes_per_second": average_speed,
+            "sampled_steps": sampled_steps,
+            "sampled_file_steps": sampled_file_steps,
+        },
+        "retention": {
+            "history_days": RUN_HISTORY_RETENTION_DAYS,
+            "last_pruned_at": last_pruned_at,
+        },
     }
 
 
@@ -483,6 +581,11 @@ def dashboard() -> str:
     return DASHBOARD_HTML
 
 
+@app.get("/favicon.svg")
+def favicon() -> FileResponse:
+    return FileResponse(APP_LOGO_PATH, media_type="image/svg+xml")
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     return {
@@ -502,6 +605,11 @@ def state() -> dict[str, Any]:
     return snapshot
 
 
+@app.get("/api/stats/summary")
+def stats_summary(period: str = Query(default="week")) -> dict[str, Any]:
+    return _statistics_summary(period)
+
+
 @app.get("/api/jobs")
 def jobs() -> dict[str, Any]:
     clouds = _refresh_catalog_clouds_from_rclone()
@@ -510,6 +618,7 @@ def jobs() -> dict[str, Any]:
     for item in jobs_payload:
         latest_run = latest_runs_by_job.get(str(item.get("key", "")), {})
         item["last_run"] = latest_run or None
+        item["last_run_status"] = latest_run.get("status") if latest_run else None
         item["last_run_started_at"] = latest_run.get("started_at") if latest_run else None
         item["last_run_requested_at"] = latest_run.get("requested_at") if latest_run else None
     return {
