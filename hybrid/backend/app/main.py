@@ -288,6 +288,11 @@ class SchedulePayload(BaseModel):
     weekdays: list[int] = Field(default_factory=list)
 
 
+class ExcludePathEntryPayload(BaseModel):
+    path: str
+    kind: str = "directory"
+
+
 class BackupOptionsPayload(BaseModel):
     max_age: str | None = None
     min_age: str | None = None
@@ -303,6 +308,7 @@ class BackupOptionsPayload(BaseModel):
     debug_dump: str | None = None
     mailru_safe_preset: bool = False
     exclude: list[str] = Field(default_factory=list)
+    exclude_paths: list[ExcludePathEntryPayload] = Field(default_factory=list)
     extra_args: list[str] = Field(default_factory=list)
 
 
@@ -600,6 +606,7 @@ def state() -> dict[str, Any]:
     snapshot = orchestrator.snapshot()
     snapshot["token_required"] = bool(settings.api_token)
     snapshot["latest_runs"] = storage.list_runs(limit=15)
+    snapshot["latest_job_runs"] = storage.latest_job_run_map()
     snapshot["backup_jobs"] = catalog.list_backup_jobs()
     snapshot["watcher"] = event_watcher.snapshot()
     return snapshot
@@ -1246,7 +1253,7 @@ def update_jobs(payload: JobCatalogPayload) -> dict[str, Any]:
 
 
 @app.get("/api/fs/browse")
-def browse_directories(path: str | None = None) -> dict[str, Any]:
+def browse_directories(path: str | None = None, include_files: bool = False) -> dict[str, Any]:
     if not path:
         roots = []
         for root in FS_ROOTS:
@@ -1267,10 +1274,13 @@ def browse_directories(path: str | None = None) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="directory not found")
 
     directories: list[dict[str, str]] = []
+    files: list[dict[str, str]] = []
     try:
         for child in sorted(target.iterdir(), key=lambda item: item.name.lower()):
             if child.is_dir():
                 directories.append({"name": child.name, "path": child.as_posix()})
+            elif include_files and child.is_file():
+                files.append({"name": child.name, "path": child.as_posix()})
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=f"permission denied: {exc}") from exc
 
@@ -1279,6 +1289,7 @@ def browse_directories(path: str | None = None) -> dict[str, Any]:
         "path": target.as_posix(),
         "parent": parent,
         "directories": directories,
+        "files": files,
     }
 
 

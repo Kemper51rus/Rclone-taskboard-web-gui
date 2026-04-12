@@ -11,7 +11,6 @@ Legacy stack обычно включал:
 - `rclone-backup.service`
 - `rclone-backup.timer`
 - `rclone-watch.service`
-- `rclone-web.service`
 - shell scripts в `/usr/local/bin`
 
 ---
@@ -19,15 +18,16 @@ Legacy stack обычно включал:
 ## 🛠️ Migration Command
 
 ```bash
-./legacy/migrate-legacy-to-hybrid.sh <systemd|docker> [target-root]
+sudo ./scripts/install.sh migrate-legacy
 ```
 
-### Аргументы
+### Полная установка с migration
 
-| Аргумент | Назначение |
-| --- | --- |
-| `systemd` или `docker` | Целевой способ развертывания |
-| `target-root` | Каталог установки, по умолчанию `/opt/rclone-hybrid` |
+Для установки/обновления и migration в одном процессе запустите:
+
+```bash
+sudo ./scripts/install.sh
+```
 
 ---
 
@@ -37,7 +37,7 @@ Legacy stack обычно включал:
 2. Экспортирует unit definitions и status output
 3. Копирует legacy runtime artifacts в backup directory
 4. Останавливает и отключает legacy services
-5. Устанавливает hybrid runtime в выбранном режиме
+5. Удаляет legacy scripts/unit'ы после backup
 
 ---
 
@@ -50,9 +50,7 @@ Legacy stack обычно включал:
 - `/usr/local/bin/rclone-backup.sh`
 - `/usr/local/bin/rclone-backup-status.sh`
 - `/usr/local/bin/rclone-watch.sh`
-- `/etc/rclone-backup.gotify`
-- `/var/lib/rclone-backup`
-- `/var/log/rclone-backup.log`
+- `/usr/local/bin/rclone-backup.sh.bak.*`
 
 ---
 
@@ -61,13 +59,13 @@ Legacy stack обычно включал:
 ### Миграция в Systemd
 
 ```bash
-sudo ./legacy/migrate-legacy-to-hybrid.sh systemd /opt/rclone-hybrid
+sudo ./scripts/install.sh migrate-legacy
 ```
 
 ### Миграция в Docker
 
 ```bash
-sudo ./legacy/migrate-legacy-to-hybrid.sh docker /opt/rclone-hybrid
+sudo ./scripts/install.sh
 ```
 
 ---

@@ -43,7 +43,7 @@ docker compose --env-file .env.docker up -d --build
 ### Installer Script
 
 ```bash
-./scripts/install-hybrid-docker.sh /opt/rclone-hybrid
+sudo ./scripts/install.sh docker
 ```
 
 ---
@@ -51,6 +51,44 @@ docker compose --env-file .env.docker up -d --build
 ## 🖥️ Systemd Deployment
 
 В режиме `systemd` backend, scheduler и watcher работают внутри одного web-сервиса.
+
+## Единый installer
+
+Основной способ установки и обслуживания:
+
+```bash
+sudo ./scripts/install.sh
+```
+
+Скрипт работает как интерактивное меню и умеет:
+
+- поставить или обновить deployment через `systemd`
+- поставить или обновить deployment через `docker`
+- подтянуть исходники из Git перед установкой
+- проверить зависимости и предложить доустановить недостающие
+- выполнить переход с legacy: сделать backup, остановить и удалить старые scripts/unit'ы
+- удалить hybrid-установку при повторном запуске
+
+Legacy-cleanup покрывает старые файлы:
+
+```text
+/usr/local/bin/rclone-backup.sh
+/usr/local/bin/rclone-watch.sh
+/usr/local/bin/rclone-backup-status.sh
+/usr/local/bin/rclone-backup.sh.bak.*
+/etc/systemd/system/rclone-backup.service
+/etc/systemd/system/rclone-backup.timer
+/etc/systemd/system/rclone-watch.service
+```
+
+Для неинтерактивного запуска доступны команды:
+
+```bash
+sudo ./scripts/install.sh systemd
+sudo ./scripts/install.sh docker
+sudo ./scripts/install.sh migrate-legacy
+sudo ./scripts/install.sh uninstall
+```
 
 ### Требования
 
@@ -78,25 +116,24 @@ cp hybrid/.env.systemd.example hybrid/.env
 ### Установка
 
 ```bash
-./scripts/install-hybrid-systemd.sh /opt/rclone-hybrid
+sudo ./scripts/install.sh systemd
 ```
 
 ### Включение сервисов
 
 ```bash
-systemctl enable --now rclone-hybrid-web.service
+systemctl status rclone-hybrid-web.service --no-pager
 ```
 
 ### Переход со старого external watcher
 
-Если на хосте раньше был отдельный `rclone-watch-hybrid.service`, выполните разовый migration:
+Если на хосте раньше был legacy pipeline или отдельный `rclone-watch-hybrid.service`, выполните migration через единый installer:
 
 ```bash
-/opt/rclone-hybrid/scripts/migrate-embedded-watcher-systemd.sh /opt/rclone-hybrid
-systemctl restart rclone-hybrid-web.service
+sudo ./scripts/install.sh migrate-legacy
 ```
 
-Скрипт останавливает и отключает старый watcher-service, удаляет устаревший unit-файл и оставляет только встроенный watcher внутри `rclone-hybrid-web.service`.
+Скрипт делает backup, останавливает и отключает старые unit'ы, удаляет устаревшие scripts/unit'ы и оставляет только встроенный watcher внутри `rclone-hybrid-web.service`.
 
 ---
 

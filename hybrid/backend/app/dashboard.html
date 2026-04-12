@@ -548,6 +548,46 @@
     .ui-tooltip.has-tooltip:focus-visible::after {
       opacity: 1;
     }
+    #runsPanel .ui-tooltip.has-tooltip::before,
+    #runsPanel .ui-tooltip.has-tooltip::after {
+      display: none;
+    }
+    #runsHistoryTooltip {
+      position: fixed;
+      min-width: 220px;
+      max-width: 320px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(124, 224, 255, 0.22);
+      background: rgba(10, 18, 28, 0.96);
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.35);
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: normal;
+      pointer-events: none;
+      z-index: 120;
+    }
+    #runsHistoryTooltip[hidden] {
+      display: none;
+    }
+    #runsHistoryTooltip::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      border-style: solid;
+    }
+    #runsHistoryTooltip[data-placement="top"]::before {
+      top: 100%;
+      border-width: 6px 6px 0 6px;
+      border-color: rgba(10, 18, 28, 0.96) transparent transparent transparent;
+    }
+    #runsHistoryTooltip[data-placement="bottom"]::before {
+      bottom: 100%;
+      border-width: 0 6px 6px 6px;
+      border-color: transparent transparent rgba(10, 18, 28, 0.96) transparent;
+    }
     .metric .k {
       color: var(--soft);
       text-transform: uppercase;
@@ -818,6 +858,30 @@
       max-height: 360px;
       background: rgba(7, 14, 22, 0.78);
     }
+    #loggingPanel:not([hidden]) {
+      display: flex;
+      flex-direction: column;
+    }
+    #loggingPanel > .token-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+      height: 100%;
+    }
+    #loggingPanel.logging-filters-collapsed #rcloneLogsFiltersBlock,
+    #loggingPanel.logging-filters-collapsed #rcloneLogsSummary,
+    #loggingPanel.logging-filters-collapsed #rcloneLogsListBlock {
+      display: none !important;
+    }
+    #loggingPanel[data-constrained="true"] .logging-viewer-frame {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    #loggingPanel[data-constrained="true"] .logging-viewer-scroll {
+      height: 100%;
+      max-height: none;
+    }
     .log-open-link {
       font-size: 12px;
       white-space: nowrap;
@@ -855,13 +919,31 @@
     .runs-list-wrap {
       flex: 1 1 auto;
       min-height: 0;
-      background: rgba(7, 14, 22, 0.58);
+      background: transparent;
     }
     .runs-list-scroll {
       max-height: none;
+      height: auto;
+      overflow: visible;
+    }
+    #runsPanel[data-constrained="true"] .runs-list-scroll {
       height: 100%;
       overflow-y: auto;
       overflow-x: hidden;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    #runsPanel[data-constrained="true"] .runs-list-scroll::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+      display: none;
+    }
+    #runsPanel[data-constrained="true"] thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: linear-gradient(180deg, rgba(22, 31, 46, 0.98), rgba(13, 20, 31, 0.98));
+      box-shadow: inset 0 -1px 0 var(--line);
     }
     #runsPanel th,
     #runsPanel td {
@@ -1144,6 +1226,47 @@
       font-weight: 600;
       box-shadow: inset 0 0 0 1px rgba(255, 90, 104, 0.14), 0 0 18px rgba(255, 90, 104, 0.12);
     }
+    .exclude-path-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .exclude-path-item {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .exclude-path-item.empty {
+      grid-template-columns: minmax(0, 1fr);
+      color: var(--soft);
+      font-size: 13px;
+    }
+    .exclude-path-kind {
+      color: var(--accent-2);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+    .exclude-path-value {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+    }
+    .exclude-path-add {
+      display: grid;
+      grid-template-columns: 140px minmax(0, 1fr) auto auto;
+      gap: 10px;
+      align-items: center;
+      margin-top: 12px;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -1334,6 +1457,9 @@
       .browse-hint {
         white-space: normal;
       }
+      .exclude-path-add {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -1355,6 +1481,7 @@
         <button id="queuesToggle" onclick="toggleQueues()">Очереди</button>
         <button id="statsToggle" onclick="toggleStatistics()">Статистика</button>
         <button id="watcherToggle" onclick="toggleWatcher()">Наблюдатель</button>
+        <button id="loggingToggle" onclick="toggleLogging()">Логи</button>
         <button id="gotifyToggle" onclick="toggleGotify()">Уведомления</button>
       </div>
     </section>
@@ -1430,12 +1557,11 @@
               <h3>История запусков</h3>
             </div>
             <div class="row">
-              <button type="button" id="loggingToggle" onclick="toggleLogging()">Логи</button>
               <button type="button" class="secondary" onclick="clearRunHistory()">Очистить</button>
             </div>
           </div>
-          <div class="runs-list-wrap scroll-frame">
-            <div class="runs-list-scroll scroll-body" id="runsListScroll">
+          <div class="runs-list-wrap">
+            <div class="runs-list-scroll" id="runsListScroll">
               <table>
                 <thead>
                   <tr>
@@ -1621,7 +1747,22 @@
               </div>
               <div class="field full">
                 <label for="excludeList">exclude patterns</label>
-                <textarea id="excludeList" placeholder="*.tmp&#10;*.dat"></textarea>
+                <div class="field-meta">Поддерживаются маски `rclone`: `*` любая часть имени, `?` один символ, `**` любой путь. Примеры: `*frigate*`, `report_2026-??-??.*`, `**/cache/**`.</div>
+                <textarea id="excludeList" placeholder="*.tmp&#10;*.dat&#10;vzdump-qemu-400*"></textarea>
+              </div>
+              <div class="field full">
+                <label for="excludePathInput">Исключения по путям</label>
+                <div class="field-meta">Можно добавить каталог или файл внутри исходного каталога. Для каталога будет исключено всё содержимое.</div>
+                <div class="exclude-path-list" id="excludePathList"></div>
+                <div class="exclude-path-add">
+                  <select id="excludePathKind">
+                    <option value="directory">Каталог</option>
+                    <option value="file">Файл</option>
+                  </select>
+                  <input id="excludePathInput" placeholder="/media/photo/library/cache/" />
+                  <button type="button" class="secondary" onclick="openBrowser('exclude')">Выбрать</button>
+                  <button type="button" onclick="addExcludePathEntryFromInput()">Добавить</button>
+                </div>
               </div>
               <div class="field full">
                 <label for="extraArgs">extra args (advanced)</label>
@@ -1696,6 +1837,7 @@
               </div>
               <div class="field full">
                 <label for="retentionExcludeList">exclude patterns для очистки</label>
+                <div class="field-meta">Те же маски `rclone`: `*`, `?`, `**`. Примеры: `keep/**`, `*.keep`, `report_2026-??-??.*`.</div>
                 <textarea id="retentionExcludeList" placeholder="keep/**&#10;*.keep"></textarea>
               </div>
               <div class="field full">
@@ -1785,10 +1927,10 @@
                   <label for="autoRcloneLogThreshold">Порог</label>
                   <input id="autoRcloneLogThreshold" type="number" min="1" max="100" value="3" inputmode="numeric" />
                 </div>
+                <button type="button" class="toggle-chip" id="rcloneLogFiltersToggle" aria-pressed="true" onclick="toggleRcloneLogFilters()">Отборы</button>
               </div>
             </div>
-            <small>Когда `Писать лог` выключено, прогресс берётся из stdout/stderr процесса без `--log-file`. Когда включено, для новых запусков создаются отдельные логи по шагам в `hybrid/backend/data/rclone-logs`. `Авто по ошибкам` включает step-логи для backup-задачи после заданного числа подряд ошибок и выключает их после такого же числа подряд успешных запусков.</small>
-            <div class="logging-toolbar">
+            <div class="logging-toolbar" id="rcloneLogsFiltersBlock">
               <div class="logging-filters">
                 <div class="field">
                   <label for="rcloneLogFilterJob">Задача</label>
@@ -1827,7 +1969,7 @@
               </div>
             </div>
             <div class="logging-summary" id="rcloneLogsSummary">Логи ещё не загружались.</div>
-            <div class="logging-list-wrap scroll-frame">
+            <div class="logging-list-wrap scroll-frame" id="rcloneLogsListBlock">
               <div class="logging-list-scroll scroll-body">
                 <table>
                   <thead>
@@ -1914,7 +2056,7 @@
           <button class="ghost" type="button" id="browseUpButton" onclick="browseUp()">Назад</button>
           <button class="secondary" type="button" id="browseChooseButton" onclick="chooseCurrentDirectory()">Выбрать текущую папку</button>
         </div>
-        <div class="muted">Стрелки: перемещение, Enter: открыть, Space: выбрать.</div>
+        <div class="muted" id="browseToolbarHint">Стрелки: перемещение, Enter: открыть, Space: выбрать.</div>
       </div>
       <div class="muted" id="browsePath">Корни файловой системы</div>
       <div class="browse-frame">
@@ -1934,6 +2076,26 @@
   </div>
 
   <script>
+    function loadBooleanPreference(key, fallback = false) {
+      try {
+        const raw = window.localStorage.getItem(key);
+        if (raw === null) return fallback;
+        return raw === "true";
+      } catch (error) {
+        return fallback;
+      }
+    }
+
+    function saveBooleanPreference(key, value) {
+      try {
+        window.localStorage.setItem(key, value ? "true" : "false");
+      } catch (error) {
+        // Ignore storage errors and keep the in-memory preference.
+      }
+    }
+
+    const SHOW_LOG_FILTERS_STORAGE_KEY = "rcloneHybrid.showLogFilters";
+
     const state = {
       jobs: [],
       clouds: [],
@@ -1953,6 +2115,7 @@
       showQueues: false,
       showStats: false,
       showLogging: false,
+      showLogFilters: loadBooleanPreference(SHOW_LOG_FILTERS_STORAGE_KEY, false),
       showWatcher: false,
       creatingNewJob: false,
       editingKey: null,
@@ -1961,6 +2124,7 @@
       toastHideTimer: null,
       serviceMessage: { text: "", tone: "ok" },
       lastSnapshot: null,
+      excludePathEntries: [],
       browseTarget: "source",
       browseEntries: [],
       browseSelectedIndex: 0,
@@ -1971,6 +2135,7 @@
     const weekdayLabels = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
     let watcherAutoSaveTimer = null;
     let queueAutoSaveTimer = null;
+    let activeRunsTooltipTarget = null;
     const defaultRcloneArgs = [
       "--contimeout", "30s",
       "--timeout", "10m",
@@ -2500,6 +2665,7 @@
         target.appendChild(runsPanel);
       }
       updateRunsPanelHeight();
+      updateLoggingPanelHeight();
     }
 
     function updateRunsPanelHeight() {
@@ -2525,6 +2691,31 @@
 
       runsPanel.style.height = `${Math.max(280, jobsHeight)}px`;
       runsPanel.dataset.constrained = "true";
+    }
+
+    function updateLoggingPanelHeight() {
+      const jobsPanel = document.getElementById("jobsPanel");
+      const loggingPanel = document.getElementById("loggingPanel");
+      if (!jobsPanel || !loggingPanel) return;
+
+      const isDesktopLayout = window.innerWidth > 1100;
+      const isVisible = state.showLogging && !loggingPanel.hidden;
+      const shouldConstrain = isDesktopLayout && isVisible && !state.showLogFilters;
+      if (!shouldConstrain) {
+        loggingPanel.style.height = "";
+        loggingPanel.dataset.constrained = "false";
+        return;
+      }
+
+      const jobsHeight = Math.round(jobsPanel.getBoundingClientRect().height);
+      if (!Number.isFinite(jobsHeight) || jobsHeight <= 0) {
+        loggingPanel.style.height = "";
+        loggingPanel.dataset.constrained = "false";
+        return;
+      }
+
+      loggingPanel.style.height = `${Math.max(280, jobsHeight)}px`;
+      loggingPanel.dataset.constrained = "true";
     }
 
     function renderCloudList() {
@@ -3160,18 +3351,33 @@
       const panel = document.getElementById("loggingPanel");
       const toggle = document.getElementById("loggingToggle");
       const autoThresholdInput = document.getElementById("autoRcloneLogThreshold");
+      const filtersToggle = document.getElementById("rcloneLogFiltersToggle");
+      const filtersBlock = document.getElementById("rcloneLogsFiltersBlock");
+      const summaryBlock = document.getElementById("rcloneLogsSummary");
+      const listBlock = document.getElementById("rcloneLogsListBlock");
       panel.hidden = !state.showLogging;
+      panel.classList.toggle("logging-filters-collapsed", !state.showLogFilters);
       toggle.classList.toggle("is-active", state.showLogging);
       setTogglePressed("rcloneLogEnabled", Boolean(state.logging?.rclone_log_enabled));
       setTogglePressed("autoRcloneLogEnabled", Boolean(state.logging?.auto_rclone_log_enabled));
+      setTogglePressed("rcloneLogFiltersToggle", Boolean(state.showLogFilters));
       autoThresholdInput.value = String(Math.max(1, Number(state.logging?.auto_rclone_log_threshold || 3)));
       autoThresholdInput.disabled = !Boolean(state.logging?.auto_rclone_log_enabled);
+      if (filtersBlock) filtersBlock.hidden = !state.showLogFilters;
+      if (summaryBlock) summaryBlock.hidden = !state.showLogFilters;
+      if (listBlock) listBlock.hidden = !state.showLogFilters;
       populateRcloneLogJobFilter();
       refreshCustomSelect("rcloneLogFilterStatus");
       refreshCustomSelect("rcloneLogFilterTrigger");
       renderRcloneLogBrowser();
       renderHeroStatusIndicators();
       updateRunsLayout();
+    }
+
+    function toggleRcloneLogFilters() {
+      state.showLogFilters = !state.showLogFilters;
+      saveBooleanPreference(SHOW_LOG_FILTERS_STORAGE_KEY, state.showLogFilters);
+      renderLoggingPanel();
     }
 
     async function refreshStatisticsSummary({ silent = false } = {}) {
@@ -3489,6 +3695,7 @@
     }
 
     function renderRuns(runs) {
+      hideRunsHistoryTooltip();
       document.getElementById("runsBody").innerHTML = runs.map((run) => `
         <tr>
           <td><button type="button" class="run-link" onclick="showRunDetails(${run.id})">${escapeHtml(formatRunDisplayId(run.id))}</button></td>
@@ -3502,6 +3709,106 @@
           </td>
         </tr>
       `).join("");
+    }
+
+    function ensureRunsHistoryTooltip() {
+      let tooltip = document.getElementById("runsHistoryTooltip");
+      if (!tooltip) {
+        tooltip = document.createElement("div");
+        tooltip.id = "runsHistoryTooltip";
+        tooltip.hidden = true;
+        tooltip.setAttribute("aria-hidden", "true");
+        document.body.appendChild(tooltip);
+      }
+      return tooltip;
+    }
+
+    function hideRunsHistoryTooltip() {
+      activeRunsTooltipTarget = null;
+      const tooltip = document.getElementById("runsHistoryTooltip");
+      if (!tooltip) return;
+      tooltip.hidden = true;
+      tooltip.textContent = "";
+      tooltip.dataset.placement = "top";
+    }
+
+    function positionRunsHistoryTooltip(target) {
+      const tooltip = ensureRunsHistoryTooltip();
+      if (tooltip.hidden) return;
+      const margin = 12;
+      const rect = target.getBoundingClientRect();
+      const tooltipRect = tooltip.getBoundingClientRect();
+      let top = rect.top - tooltipRect.height - 10;
+      let placement = "top";
+      if (top < margin) {
+        top = rect.bottom + 10;
+        placement = "bottom";
+      }
+      top = Math.max(margin, Math.min(top, window.innerHeight - tooltipRect.height - margin));
+      let left = rect.left + (rect.width / 2) - (tooltipRect.width / 2);
+      left = Math.max(margin, Math.min(left, window.innerWidth - tooltipRect.width - margin));
+      tooltip.style.top = `${top}px`;
+      tooltip.style.left = `${left}px`;
+      tooltip.dataset.placement = placement;
+    }
+
+    function showRunsHistoryTooltip(target) {
+      const text = String(target?.getAttribute("data-tooltip") || "").trim();
+      if (!text) {
+        hideRunsHistoryTooltip();
+        return;
+      }
+      activeRunsTooltipTarget = target;
+      const tooltip = ensureRunsHistoryTooltip();
+      tooltip.textContent = text;
+      tooltip.hidden = false;
+      positionRunsHistoryTooltip(target);
+    }
+
+    function bindRunsHistoryTooltipLayer() {
+      const runsPanel = document.getElementById("runsPanel");
+      if (!runsPanel || runsPanel.dataset.tooltipLayerBound === "true") return;
+      runsPanel.dataset.tooltipLayerBound = "true";
+
+      const reposition = () => {
+        if (activeRunsTooltipTarget && document.body.contains(activeRunsTooltipTarget)) {
+          positionRunsHistoryTooltip(activeRunsTooltipTarget);
+        } else {
+          hideRunsHistoryTooltip();
+        }
+      };
+
+      runsPanel.addEventListener("mouseover", (event) => {
+        const target = event.target.closest(".ui-tooltip.has-tooltip");
+        if (!target || !runsPanel.contains(target)) return;
+        showRunsHistoryTooltip(target);
+      });
+      runsPanel.addEventListener("mouseout", (event) => {
+        const target = event.target.closest(".ui-tooltip.has-tooltip");
+        if (!target || target !== activeRunsTooltipTarget) return;
+        const related = event.relatedTarget instanceof Element
+          ? event.relatedTarget.closest(".ui-tooltip.has-tooltip")
+          : null;
+        if (related === activeRunsTooltipTarget) return;
+        hideRunsHistoryTooltip();
+      });
+      runsPanel.addEventListener("focusin", (event) => {
+        const target = event.target.closest(".ui-tooltip.has-tooltip");
+        if (!target || !runsPanel.contains(target)) return;
+        showRunsHistoryTooltip(target);
+      });
+      runsPanel.addEventListener("focusout", (event) => {
+        const target = event.target.closest(".ui-tooltip.has-tooltip");
+        if (!target || target !== activeRunsTooltipTarget) return;
+        const related = event.relatedTarget instanceof Element
+          ? event.relatedTarget.closest(".ui-tooltip.has-tooltip")
+          : null;
+        if (related === activeRunsTooltipTarget) return;
+        hideRunsHistoryTooltip();
+      });
+      runsPanel.addEventListener("scroll", reposition, true);
+      window.addEventListener("resize", reposition);
+      window.addEventListener("scroll", reposition, true);
     }
 
     function lastRunPillClass(job) {
@@ -3678,6 +3985,7 @@
       if (normalized.max_age) args.push("--max-age", normalized.max_age);
       if (normalized.min_age) args.push("--min-age", normalized.min_age);
       (normalized.exclude || []).forEach((pattern) => args.push("--exclude", pattern));
+      buildExcludePathPatterns(formValue("jobSource"), normalized.exclude_paths || []).forEach((pattern) => args.push("--exclude", pattern));
       appendPreviewSingletonArg(args, "--transfers", transfers);
       appendPreviewSingletonArg(args, "--checkers", checkers);
       appendPreviewSingletonArg(args, "--tpslimit", tpslimit);
@@ -3901,6 +4209,127 @@
       });
     }
 
+    function normalizePosixPath(value) {
+      const raw = String(value || "").trim().replaceAll("\\", "/");
+      if (!raw) return "";
+      const absolute = raw.startsWith("/");
+      const parts = [];
+      raw.split("/").forEach((part) => {
+        if (!part || part === ".") return;
+        if (part === "..") {
+          if (parts.length) parts.pop();
+          return;
+        }
+        parts.push(part);
+      });
+      const normalized = `${absolute ? "/" : ""}${parts.join("/")}`;
+      return normalized || (absolute ? "/" : "");
+    }
+
+    function normalizeExcludePathEntry(entry) {
+      const path = normalizePosixPath(entry?.path || "");
+      const kind = String(entry?.kind || "directory").trim().toLowerCase() === "file" ? "file" : "directory";
+      return path ? { path, kind } : null;
+    }
+
+    function buildExcludePathPatterns(sourcePath, entries) {
+      const base = normalizePosixPath(sourcePath || "");
+      if (!base || !base.startsWith("/")) return [];
+      const prefix = base === "/" ? "/" : `${base}/`;
+      const patterns = [];
+      const seen = new Set();
+      (entries || []).forEach((entry) => {
+        const normalized = normalizeExcludePathEntry(entry);
+        if (!normalized || !normalized.path.startsWith("/")) return;
+        if (normalized.path === base) return;
+        if (base !== "/" && !normalized.path.startsWith(prefix)) return;
+        if (base === "/" && !normalized.path.startsWith("/")) return;
+        const relative = base === "/"
+          ? normalized.path.slice(1)
+          : normalized.path.slice(prefix.length);
+        if (!relative) return;
+        const pattern = normalized.kind === "directory"
+          ? `${relative.replace(/\/+$/, "")}/**`
+          : relative;
+        if (!seen.has(pattern)) {
+          seen.add(pattern);
+          patterns.push(pattern);
+        }
+      });
+      return patterns;
+    }
+
+    function renderExcludePathEntries() {
+      const container = document.getElementById("excludePathList");
+      if (!container) return;
+      if (!Array.isArray(state.excludePathEntries) || !state.excludePathEntries.length) {
+        container.innerHTML = '<div class="exclude-path-item empty">Пока нет path-исключений. Ниже можно добавить каталог или файл.</div>';
+        return;
+      }
+      container.innerHTML = state.excludePathEntries.map((entry, index) => `
+        <div class="exclude-path-item">
+          <div class="exclude-path-kind">${entry.kind === "file" ? "ФАЙЛ" : "КАТАЛОГ"}</div>
+          <div class="exclude-path-value">${escapeHtml(entry.path)}</div>
+          <button type="button" class="ghost" onclick="removeExcludePathEntry(${index})">x</button>
+        </div>
+      `).join("");
+    }
+
+    function syncExcludePathDraft(path, kind = null) {
+      document.getElementById("excludePathInput").value = path || "";
+      if (kind) {
+        document.getElementById("excludePathKind").value = kind === "file" ? "file" : "directory";
+      }
+    }
+
+    function addExcludePathEntry(path, kind = null) {
+      const sourcePath = normalizePosixPath(formValue("jobSource"));
+      if (!sourcePath) {
+        setToast("Сначала укажите исходный каталог задачи.", "error");
+        return false;
+      }
+      const normalized = normalizeExcludePathEntry({
+        path: path || formValue("excludePathInput"),
+        kind: kind || document.getElementById("excludePathKind").value,
+      });
+      if (!normalized) {
+        setToast("Укажите путь для исключения.", "error");
+        return false;
+      }
+      if (!normalized.path.startsWith("/")) {
+        setToast("Путь исключения должен быть абсолютным.", "error");
+        return false;
+      }
+      if (normalized.path === sourcePath) {
+        setToast("Нельзя исключить весь исходный каталог целиком.", "error");
+        return false;
+      }
+      const sourcePrefix = sourcePath === "/" ? "/" : `${sourcePath}/`;
+      if (sourcePath !== "/" && !normalized.path.startsWith(sourcePrefix)) {
+        setToast("Путь исключения должен находиться внутри исходного каталога.", "error");
+        return false;
+      }
+      if (state.excludePathEntries.some((entry) => entry.path === normalized.path && entry.kind === normalized.kind)) {
+        syncExcludePathDraft("", normalized.kind);
+        return false;
+      }
+      state.excludePathEntries = [...state.excludePathEntries, normalized];
+      syncExcludePathDraft("", normalized.kind);
+      renderExcludePathEntries();
+      collectFormJob();
+      return true;
+    }
+
+    function addExcludePathEntryFromInput() {
+      addExcludePathEntry(formValue("excludePathInput"), document.getElementById("excludePathKind").value);
+    }
+
+    function removeExcludePathEntry(index) {
+      state.excludePathEntries = state.excludePathEntries.filter((_, itemIndex) => itemIndex !== index);
+      renderExcludePathEntries();
+      collectFormJob();
+    }
+
     function collectJobRcloneOptions() {
       return {
         max_age: formValue("maxAge") || null,
@@ -3917,6 +4346,7 @@
         debug_dump: normalizeDebugDump(document.getElementById("jobDebugDump").value),
         mailru_safe_preset: isTogglePressed("jobMailruSafePreset"),
         exclude: formValue("excludeList").split("\n").map((item) => item.trim()).filter(Boolean),
+        exclude_paths: state.excludePathEntries.map((entry) => ({ ...entry })),
         extra_args: formValue("extraArgs").split("\n").map((item) => item.trim()).filter(Boolean),
       };
     }
@@ -3961,6 +4391,11 @@
       setTogglePressed("jobFastList", options.fast_list ?? false);
       setTogglePressed("jobNoTraverse", options.no_traverse ?? false);
       document.getElementById("excludeList").value = (options.exclude || []).join("\n");
+      state.excludePathEntries = Array.isArray(options.exclude_paths)
+        ? options.exclude_paths.map((entry) => normalizeExcludePathEntry(entry)).filter(Boolean)
+        : [];
+      syncExcludePathDraft("", "directory");
+      renderExcludePathEntries();
       document.getElementById("extraArgs").value = (options.extra_args || []).join("\n");
     }
 
@@ -4336,6 +4771,11 @@
       }
       if (job.kind === "backup") {
         if (!job.source_path.startsWith("/")) throw new Error("Source должен быть абсолютным каталогом");
+        const excludePathPatterns = buildExcludePathPatterns(job.source_path, job.options?.exclude_paths || []);
+        const excludePathEntries = Array.isArray(job.options?.exclude_paths) ? job.options.exclude_paths : [];
+        if (excludePathPatterns.length !== excludePathEntries.length) {
+          throw new Error("Все path-исключения должны быть внутри исходного каталога и не совпадать с ним целиком");
+        }
         if (job.cloud_key) {
           if (!job.destination_path.includes(":")) throw new Error("Для выбранного облака нужен remote_name");
         }
@@ -4859,11 +5299,25 @@
       }
     }
 
+    function updateBrowseChrome() {
+      const excludeMode = state.browseTarget === "exclude";
+      document.getElementById("browseTitle").textContent = excludeMode ? "Выбор исключения" : "Выбор каталога";
+      document.getElementById("browseChooseButton").textContent = excludeMode ? "Добавить текущую папку" : "Выбрать текущую папку";
+      document.getElementById("browseToolbarHint").textContent = excludeMode
+        ? "Стрелки: перемещение, Enter: открыть или добавить файл, Space: добавить."
+        : "Стрелки: перемещение, Enter: открыть, Space: выбрать.";
+    }
+
     async function openBrowser(target) {
+      if (target === "exclude" && !formValue("jobSource")) {
+        setToast("Сначала укажите исходный каталог задачи.", "error");
+        return;
+      }
       state.browseTarget = target;
+      updateBrowseChrome();
       document.getElementById("browseModal").hidden = false;
       document.body.style.overflow = "hidden";
-      await browse(null);
+      await browse(target === "exclude" ? formValue("jobSource") : null);
       document.getElementById("browsePanel").focus();
     }
 
@@ -4886,7 +5340,7 @@
 
     function chooseCurrentDirectory() {
       if (state.browseCurrentPath) {
-        selectDirectory(state.browseCurrentPath);
+        selectBrowseEntry({ path: state.browseCurrentPath, type: "directory" });
       }
     }
 
@@ -4907,8 +5361,8 @@
     function activateBrowseEntry(index, mode = "open") {
       const entry = state.browseEntries[index];
       if (!entry) return;
-      if (mode === "select") {
-        selectDirectory(entry.path);
+      if (mode === "select" || entry.type === "file") {
+        selectBrowseEntry(entry);
         return;
       }
       if (entry.type === "parent") {
@@ -4945,12 +5399,18 @@
       document.getElementById("browseSelection").textContent = active ? active.path : "Нет папок";
       document.getElementById("browseHint").textContent = active?.type === "parent"
         ? "Enter или стрелка влево: перейти выше."
-        : "Enter/стрелка вправо: открыть. Space: выбрать папку.";
+        : active?.type === "file"
+          ? "Enter или Space: добавить файл в исключения."
+          : "Enter/стрелка вправо: открыть. Space: выбрать.";
     }
 
     async function browse(path) {
       try {
-        const url = path ? `/api/fs/browse?path=${encodeURIComponent(path)}` : "/api/fs/browse";
+        const includeFiles = state.browseTarget === "exclude";
+        const query = new URLSearchParams();
+        if (path) query.set("path", path);
+        if (includeFiles) query.set("include_files", "true");
+        const url = `/api/fs/browse${query.size ? `?${query.toString()}` : ""}`;
         const response = await fetch(url);
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.detail || "browse failed");
@@ -4976,6 +5436,15 @@
             hint: "открыть или выбрать",
           });
         });
+        (payload.files || []).forEach((file) => {
+          entries.push({
+            type: "file",
+            path: file.path,
+            label: file.name,
+            kind: "файл",
+            hint: "добавить в исключения",
+          });
+        });
         state.browseEntries = entries;
         state.browseSelectedIndex = 0;
         document.getElementById("browseUpButton").disabled = !payload.parent;
@@ -4986,19 +5455,61 @@
       }
     }
 
-    function selectDirectory(path) {
+    function selectBrowseEntry(entry) {
       if (state.browseTarget === "source") {
-        document.getElementById("jobSource").value = path.endsWith("/") ? path : `${path}/`;
+        document.getElementById("jobSource").value = entry.path.endsWith("/") ? entry.path : `${entry.path}/`;
+      } else if (state.browseTarget === "exclude") {
+        if (!addExcludePathEntry(entry.path, entry.type === "file" ? "file" : "directory")) {
+          return;
+        }
       }
       collectFormJob();
       closeBrowser();
-      setToast(`Выбран каталог ${path}`, "ok");
+      setToast(
+        state.browseTarget === "exclude"
+          ? `Добавлено исключение: ${entry.path}`
+          : `Выбран каталог ${entry.path}`,
+        "ok"
+      );
+    }
+
+    function applyLatestJobRuns(snapshot, { rerender = true } = {}) {
+      if (Array.isArray(state.jobs) && state.jobs.length) {
+        const latestJobRuns = snapshot.latest_job_runs || {};
+        let changed = false;
+        state.jobs = state.jobs.map((job) => {
+          const latestRun = latestJobRuns[job.key] || null;
+          const nextJob = {
+            ...job,
+            last_run: latestRun,
+            last_run_status: latestRun?.status || null,
+            last_run_started_at: latestRun?.started_at || null,
+            last_run_requested_at: latestRun?.requested_at || null,
+          };
+          if (
+            !changed
+            && (
+              job.last_run_status !== nextJob.last_run_status
+              || job.last_run_started_at !== nextJob.last_run_started_at
+              || job.last_run_requested_at !== nextJob.last_run_requested_at
+              || (job.last_run?.run_id || null) !== (nextJob.last_run?.run_id || null)
+            )
+          ) {
+            changed = true;
+          }
+          return nextJob;
+        });
+        if (rerender && changed) {
+          renderJobs();
+        }
+      }
     }
 
     async function refreshSnapshot() {
       const response = await fetch("/api/state");
       const snapshot = await response.json();
       state.lastSnapshot = snapshot;
+      applyLatestJobRuns(snapshot);
       state.watcherRuntime = snapshot.watcher || state.watcherRuntime;
       renderStatus(snapshot);
       renderCopyProgress(snapshot.copy_progress || [], snapshot.active_operations || []);
@@ -5016,7 +5527,7 @@
 
     async function refreshAll() {
       try {
-        const [, jobs] = await Promise.all([
+        const [snapshot, jobs] = await Promise.all([
           refreshSnapshot(),
           fetch("/api/jobs"),
         ]);
@@ -5029,6 +5540,7 @@
         state.bandwidth = jobsPayload.bandwidth || state.bandwidth;
         state.logging = jobsPayload.logging || state.logging;
         state.watcher = jobsPayload.watcher || state.watcher;
+        applyLatestJobRuns(snapshot, { rerender: false });
         renderJobs();
         renderBandwidthControl();
         renderCloudsPanel();
@@ -5062,6 +5574,12 @@
 
     ["jobSource", "jobDestination", "jobDestinationSubpath", "maxAge", "minAge", "jobTransfers", "jobCheckers", "jobTpslimit", "jobTpslimitBurst", "jobRetries", "jobLowLevelRetries", "jobRetriesSleep", "excludeList", "extraArgs", "retentionMinAge", "retentionTransfers", "retentionCheckers", "retentionTpslimit", "retentionTpslimitBurst", "retentionRetries", "retentionLowLevelRetries", "retentionRetriesSleep", "retentionExcludeList", "retentionExtraArgs", "jobNotifyPriority", "jobNotifyTitle", "commandList"].forEach((id) => {
       document.getElementById(id).addEventListener("input", () => collectFormJob());
+    });
+    document.getElementById("excludePathInput").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addExcludePathEntryFromInput();
+      }
     });
     document.getElementById("jobCloud").addEventListener("change", () => updateJobKindVisibility());
     document.getElementById("jobDebugDump").addEventListener("change", () => collectFormJob());
@@ -5101,6 +5619,7 @@
     window.addEventListener("resize", () => {
       syncQueuesPanelMenuSpacer();
       updateRunsPanelHeight();
+      updateLoggingPanelHeight();
     });
 
     ["retentionEnabled", "jobNotifySuccess", "jobNotifyFailure", "jobWatcherEnabled", "jobMailruSafePreset", "jobFastList", "jobNoTraverse", "retentionMailruSafePreset", "retentionFastList", "retentionNoTraverse"].forEach((id) => {
@@ -5154,7 +5673,7 @@
         event.preventDefault();
         const entry = state.browseEntries[state.browseSelectedIndex];
         if (entry && entry.type !== "parent") {
-          selectDirectory(entry.path);
+          selectBrowseEntry(entry);
         }
       }
     });
@@ -5175,6 +5694,7 @@
     });
 
     document.querySelectorAll(".editor select, #globalBandwidthLimit, #loggingPanel select, #statsPanel select").forEach((select) => initCustomSelect(select));
+    bindRunsHistoryTooltipLayer();
     refreshAll();
     setInterval(() => {
       refreshAntiBotMetric();
@@ -5182,7 +5702,7 @@
     }, 1000);
     setInterval(() => {
       refreshSnapshot().catch((error) => setToast(error.message || "Ошибка обновления статуса", "error"));
-    }, 10000);
+    }, 5000);
   </script>
 </body>
 </html>

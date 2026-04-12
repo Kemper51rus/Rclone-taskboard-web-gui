@@ -1,0 +1,480 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEFAULT_GIT_URL="${DEFAULT_GIT_URL:-https://github.com/Kemper51rus/Rclone-Commander-web-gui.git}"
+DEFAULT_GIT_REF="${DEFAULT_GIT_REF:-main}"
+TARGET_ROOT="${TARGET_ROOT:-/opt/rclone-hybrid}"
+SOURCE_ROOT="${SOURCE_ROOT:-}"
+SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+SERVICE_NAME="${SERVICE_NAME:-rclone-hybrid-web.service}"
+SOURCE_CHECKOUT_DEFAULT="${SOURCE_CHECKOUT_DEFAULT:-/opt/rclone-commander-src}"
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_REPO_ROOT="$(git -C "$SCRIPT_DIR/.." rev-parse --show-toplevel 2>/dev/null || true)"
+
+LEGACY_UNITS=(
+  rclone-backup.service
+  rclone-backup.timer
+  rclone-watch.service
+)
+
+LEGACY_FILES=(
+  /usr/local/bin/rclone-backup.sh
+  /usr/local/bin/rclone-watch.sh
+  /usr/local/bin/rclone-backup-status.sh
+)
+
+log() {
+  printf '%s\n' "$*"
+}
+
+die() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+need_root() {
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    die "Запустите скрипт от root: sudo $0"
+  fi
+}
+
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+confirm() {
+  local prompt="$1"
+  local default="${2:-no}"
+  local suffix="[y/N]"
+  local answer
+  [[ "$default" == "yes" ]] && suffix="[Y/n]"
+  while true; do
+    read -r -p "$prompt $suffix " answer
+    answer="${answer,,}"
+    if [[ -z "$answer" ]]; then
+      [[ "$default" == "yes" ]]
+      return
+    fi
+    case "$answer" in
+      y|yes|д|да) return 0 ;;
+      n|no|н|нет) return 1 ;;
+      *) log "Ответьте yes/no или да/нет." ;;
+    esac
+  done
+}
+
+ask_value() {
+  local prompt="$1"
+  local default="$2"
+  local answer
+  read -r -p "$prompt [$default]: " answer
+  printf '%s\n' "${answer:-$default}"
+}
+
+safe_rm_rf() {
+  local path="$1"
+  [[ -n "$path" ]] || die "refusing to remove empty path"
+  [[ "$path" != "/" ]] || die "refusing to remove /"
+  [[ "$path" != "/opt" ]] || die "refusing to remove /opt"
+  [[ "$path" != "/usr" ]] || die "refusing to remove /usr"
+  [[ "$path" != "/etc" ]] || die "refusing to remove /etc"
+  rm -rf --one-file-system -- "$path"
+}
+
+install_packages() {
+  local packages=("$@")
+  [[ "${#packages[@]}" -gt 0 ]] || return 0
+  if command_exists apt-get; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
+  elif command_exists dnf; then
+    dnf install -y "${packages[@]}"
+  elif command_exists yum; then
+    yum install -y "${packages[@]}"
+  elif command_exists zypper; then
+    zypper --non-interactive install "${packages[@]}"
+  elif command_exists pacman; then
+    pacman -Sy --noconfirm "${packages[@]}"
+  else
+    die "Не найден поддерживаемый package manager. Установите вручную: ${packages[*]}"
+  fi
+}
+
+package_for_command() {
+  local command_name="$1"
+  case "$command_name" in
+    git) printf 'git\n' ;;
+    curl) printf 'curl\n' ;;
+    rclone) printf 'rclone\n' ;;
+    python3) printf 'python3\n' ;;
+    install) printf 'coreutils\n' ;;
+    docker) printf 'docker.io\n' ;;
+    *) printf '%s\n' "$command_name" ;;
+  esac
+}
+
+check_python_venv() {
+  "$PYTHON_BIN" -m venv --help >/dev/null 2>&1
+}
+
+ensure_dependencies() {
+  local mode="$1"
+  local missing_packages=()
+  local required_commands=(git install systemctl "$PYTHON_BIN" rclone curl)
+
+  if [[ "$mode" == "docker" ]]; then
+    required_commands=(git install docker curl)
+  fi
+
+  for command_name in "${required_commands[@]}"; do
+    if ! command_exists "$command_name"; then
+      missing_packages+=("$(package_for_command "$command_name")")
+    fi
+  done
+
+  if [[ "$mode" == "systemd" ]] && command_exists "$PYTHON_BIN" && ! check_python_venv; then
+    missing_packages+=(python3-venv)
+  fi
+
+  if [[ "$mode" == "docker" ]] && command_exists docker && ! docker compose version >/dev/null 2>&1 && ! command_exists docker-compose; then
+    missing_packages+=(docker-compose-plugin)
+  fi
+
+  if [[ "${#missing_packages[@]}" -eq 0 ]]; then
+    log "Зависимости для режима '$mode' выглядят установленными."
+    return 0
+  fi
+
+  log "Не хватает зависимостей для режима '$mode': ${missing_packages[*]}"
+  if confirm "Доустановить зависимости автоматически?" "yes"; then
+    install_packages "${missing_packages[@]}"
+  else
+    die "Установка остановлена: не хватает зависимостей."
+  fi
+}
+
+docker_compose() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose "$@"
+  elif command_exists docker-compose; then
+    docker-compose "$@"
+  else
+    die "Не найден docker compose."
+  fi
+}
+
+default_source_root() {
+  if [[ -n "$SCRIPT_REPO_ROOT" && -d "$SCRIPT_REPO_ROOT/.git" ]]; then
+    printf '%s\n' "$SCRIPT_REPO_ROOT"
+  else
+    printf '%s\n' "$SOURCE_CHECKOUT_DEFAULT"
+  fi
+}
+
+prepare_source_checkout() {
+  local chosen_source
+  chosen_source="$(ask_value "Git checkout с исходниками" "${SOURCE_ROOT:-$(default_source_root)}")"
+  SOURCE_ROOT="$chosen_source"
+
+  if [[ -d "$SOURCE_ROOT/.git" ]]; then
+    log "Используется существующий Git checkout: $SOURCE_ROOT"
+    if confirm "Обновить checkout из Git перед установкой?" "yes"; then
+      git -C "$SOURCE_ROOT" fetch --all --prune
+      git -C "$SOURCE_ROOT" checkout "$DEFAULT_GIT_REF"
+      git -C "$SOURCE_ROOT" pull --ff-only
+    fi
+  else
+    local git_url
+    git_url="$(ask_value "Git URL репозитория" "$DEFAULT_GIT_URL")"
+    local git_ref
+    git_ref="$(ask_value "Git branch/tag" "$DEFAULT_GIT_REF")"
+    if [[ -e "$SOURCE_ROOT" ]]; then
+      die "$SOURCE_ROOT уже существует, но это не Git checkout. Укажите другой SOURCE_ROOT или удалите каталог вручную."
+    fi
+    install -d "$(dirname "$SOURCE_ROOT")"
+    git clone --branch "$git_ref" "$git_url" "$SOURCE_ROOT"
+  fi
+
+  [[ -f "$SOURCE_ROOT/hybrid/backend/app/main.py" ]] || die "В $SOURCE_ROOT не найден hybrid/backend/app/main.py"
+}
+
+copy_runtime_bundle() {
+  local source_root="$1"
+  local target_root="$2"
+
+  install -d \
+    "$target_root" \
+    "$target_root/hybrid" \
+    "$target_root/hybrid/backend" \
+    "$target_root/hybrid/backend/app" \
+    "$target_root/hybrid/data" \
+    "$target_root/systemd" \
+    "$target_root/scripts"
+
+  cp -a "$source_root/hybrid/backend/app/." "$target_root/hybrid/backend/app/"
+  find "$target_root/hybrid/backend/app" \( -type d -name __pycache__ -o -type f -name '*.pyc' \) -exec rm -rf {} +
+
+  install -m 0644 "$source_root/hybrid/backend/requirements.txt" "$target_root/hybrid/backend/requirements.txt"
+  install -m 0644 "$source_root/hybrid/backend/app/jobs/default_jobs.example.json" "$target_root/hybrid/backend/app/jobs/default_jobs.example.json"
+  install -m 0755 "$source_root/scripts/install.sh" "$target_root/scripts/install.sh"
+  rm -f \
+    "$target_root/scripts/install-hybrid-systemd.sh" \
+    "$target_root/scripts/install-hybrid-docker.sh" \
+    "$target_root/scripts/migrate-embedded-watcher-systemd.sh"
+  if [[ -f "$source_root/hybrid/backend/Dockerfile" ]]; then
+    install -m 0644 "$source_root/hybrid/backend/Dockerfile" "$target_root/hybrid/backend/Dockerfile"
+  fi
+  if [[ -f "$source_root/hybrid/docker-compose.yml" ]]; then
+    install -m 0644 "$source_root/hybrid/docker-compose.yml" "$target_root/hybrid/docker-compose.yml"
+  fi
+  if [[ -f "$source_root/hybrid/.env.docker.example" ]]; then
+    install -m 0644 "$source_root/hybrid/.env.docker.example" "$target_root/hybrid/.env.docker.example"
+  fi
+  if [[ -f "$source_root/hybrid/.env.systemd.example" ]]; then
+    install -m 0644 "$source_root/hybrid/.env.systemd.example" "$target_root/hybrid/.env.systemd.example"
+  fi
+
+  if [[ ! -f "$target_root/hybrid/backend/app/jobs/default_jobs.json" ]]; then
+    install -m 0644 \
+      "$source_root/hybrid/backend/app/jobs/default_jobs.example.json" \
+      "$target_root/hybrid/backend/app/jobs/default_jobs.json"
+  fi
+}
+
+escape_sed_replacement() {
+  printf '%s' "$1" | sed 's/[&|\\]/\\&/g'
+}
+
+install_systemd_unit() {
+  local source_root="$1"
+  local target_root="$2"
+  local escaped_target
+  escaped_target="$(escape_sed_replacement "$target_root")"
+  sed "s|/opt/rclone-hybrid|$escaped_target|g" \
+    "$source_root/systemd/rclone-hybrid-web.service" > "$target_root/systemd/rclone-hybrid-web.service"
+  install -m 0644 "$target_root/systemd/rclone-hybrid-web.service" "$SYSTEMD_DIR/$SERVICE_NAME"
+  systemctl daemon-reload
+}
+
+remove_obsolete_embedded_watcher_unit() {
+  local old_service="${OLD_WATCHER_SERVICE:-rclone-watch-hybrid.service}"
+  if systemctl is-active --quiet "$old_service" 2>/dev/null; then
+    systemctl stop "$old_service" || true
+  fi
+  if systemctl is-enabled --quiet "$old_service" 2>/dev/null; then
+    systemctl disable "$old_service" || true
+  fi
+  rm -f "$SYSTEMD_DIR/$old_service"
+  systemctl daemon-reload
+}
+
+install_or_update_systemd() {
+  need_root
+  TARGET_ROOT="$(ask_value "Каталог установки runtime" "$TARGET_ROOT")"
+  ensure_dependencies systemd
+  prepare_source_checkout
+
+  if confirm "Выполнить переход с legacy и удалить старые скрипты/unit'ы?" "no"; then
+    cleanup_legacy
+  fi
+
+  copy_runtime_bundle "$SOURCE_ROOT" "$TARGET_ROOT"
+  if [[ ! -f "$TARGET_ROOT/hybrid/.env" ]]; then
+    install -m 0644 "$SOURCE_ROOT/hybrid/.env.systemd.example" "$TARGET_ROOT/hybrid/.env"
+  fi
+
+  "$PYTHON_BIN" -m venv "$TARGET_ROOT/hybrid/.venv"
+  "$TARGET_ROOT/hybrid/.venv/bin/pip" install --upgrade pip
+  "$TARGET_ROOT/hybrid/.venv/bin/pip" install -r "$TARGET_ROOT/hybrid/backend/requirements.txt"
+
+  install_systemd_unit "$SOURCE_ROOT" "$TARGET_ROOT"
+  remove_obsolete_embedded_watcher_unit
+  systemctl enable "$SERVICE_NAME"
+  systemctl restart "$SERVICE_NAME"
+
+  log "Systemd установка/обновление завершены."
+  log "Dashboard: http://<host>:8080/"
+  systemctl status "$SERVICE_NAME" --no-pager || true
+}
+
+install_or_update_docker() {
+  need_root
+  TARGET_ROOT="$(ask_value "Каталог установки runtime" "$TARGET_ROOT")"
+  ensure_dependencies docker
+  prepare_source_checkout
+
+  if confirm "Выполнить переход с legacy и удалить старые скрипты/unit'ы?" "no"; then
+    cleanup_legacy
+  fi
+
+  copy_runtime_bundle "$SOURCE_ROOT" "$TARGET_ROOT"
+  if [[ ! -f "$TARGET_ROOT/hybrid/.env.docker" ]]; then
+    install -m 0644 "$SOURCE_ROOT/hybrid/.env.docker.example" "$TARGET_ROOT/hybrid/.env.docker"
+  fi
+
+  (
+    cd "$TARGET_ROOT/hybrid"
+    docker_compose --env-file .env.docker up -d --build
+  )
+
+  log "Docker установка/обновление завершены."
+  log "Dashboard: http://<host>:8080/"
+}
+
+backup_path() {
+  local backup_root="$1"
+  local source="$2"
+  local target="$backup_root$source"
+  if [[ -e "$source" || -L "$source" ]]; then
+    install -d "$(dirname "$target")"
+    cp -a "$source" "$target"
+  fi
+}
+
+cleanup_legacy() {
+  need_root
+  local stamp backup_root legacy_backups=()
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  backup_root="${BACKUP_ROOT:-$TARGET_ROOT/migration-backups/$stamp}"
+
+  shopt -s nullglob
+  legacy_backups=(/usr/local/bin/rclone-backup.sh.bak.*)
+  shopt -u nullglob
+
+  log "Будет сделан backup legacy-файлов в: $backup_root"
+  log "Legacy unit'ы: ${LEGACY_UNITS[*]}"
+  log "Legacy scripts: ${LEGACY_FILES[*]}"
+  if [[ "${#legacy_backups[@]}" -gt 0 ]]; then
+    log "Backup-файлы старого rclone-backup.sh: ${legacy_backups[*]}"
+  fi
+
+  if ! confirm "Продолжить backup + остановку + удаление legacy?" "no"; then
+    log "Legacy migration пропущена."
+    return 0
+  fi
+
+  install -d "$backup_root"
+  for unit in "${LEGACY_UNITS[@]}"; do
+    systemctl cat "$unit" > "$backup_root/${unit}.systemctl-cat.txt" 2>/dev/null || true
+    systemctl status "$unit" --no-pager > "$backup_root/${unit}.status.txt" 2>/dev/null || true
+    backup_path "$backup_root" "$SYSTEMD_DIR/$unit"
+  done
+  for path in "${LEGACY_FILES[@]}" "${legacy_backups[@]}"; do
+    backup_path "$backup_root" "$path"
+  done
+
+  for unit in "${LEGACY_UNITS[@]}"; do
+    systemctl disable --now "$unit" 2>/dev/null || true
+    rm -f "$SYSTEMD_DIR/$unit"
+  done
+  for path in "${LEGACY_FILES[@]}" "${legacy_backups[@]}"; do
+    rm -f -- "$path"
+  done
+  systemctl daemon-reload
+
+  log "Legacy migration завершена."
+  log "Backup snapshot: $backup_root"
+}
+
+uninstall_hybrid() {
+  need_root
+  TARGET_ROOT="$(ask_value "Каталог установленного runtime" "$TARGET_ROOT")"
+
+  log "Будет остановлен и отключен $SERVICE_NAME, если он установлен."
+  if confirm "Продолжить удаление hybrid-служб?" "no"; then
+    systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+    rm -f "$SYSTEMD_DIR/$SERVICE_NAME"
+    systemctl daemon-reload
+    systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
+  fi
+
+  if [[ -f "$TARGET_ROOT/hybrid/docker-compose.yml" ]]; then
+    if confirm "Остановить docker compose stack в $TARGET_ROOT/hybrid?" "yes"; then
+      (
+        cd "$TARGET_ROOT/hybrid"
+        docker_compose --env-file .env.docker down || true
+      )
+    fi
+  fi
+
+  if [[ -d "$TARGET_ROOT" ]]; then
+    if confirm "Удалить runtime-каталог $TARGET_ROOT включая data/jobs/env?" "no"; then
+      safe_rm_rf "$TARGET_ROOT"
+    else
+      log "Runtime-каталог сохранён: $TARGET_ROOT"
+    fi
+  fi
+
+  if [[ -n "$SOURCE_ROOT" && -d "$SOURCE_ROOT/.git" ]]; then
+    if confirm "Удалить source checkout $SOURCE_ROOT?" "no"; then
+      safe_rm_rf "$SOURCE_ROOT"
+    fi
+  fi
+
+  log "Uninstall завершён."
+}
+
+print_status() {
+  log ""
+  log "Текущий статус:"
+  if systemctl list-unit-files "$SERVICE_NAME" --no-legend >/dev/null 2>&1; then
+    log "  systemd: $SERVICE_NAME найден"
+    systemctl is-active --quiet "$SERVICE_NAME" && log "  active: yes" || log "  active: no"
+  else
+    log "  systemd: $SERVICE_NAME не найден"
+  fi
+  [[ -d "$TARGET_ROOT" ]] && log "  runtime: $TARGET_ROOT найден" || log "  runtime: $TARGET_ROOT не найден"
+  [[ -n "$SCRIPT_REPO_ROOT" ]] && log "  current git checkout: $SCRIPT_REPO_ROOT"
+  log ""
+}
+
+main_menu() {
+  while true; do
+    print_status
+    cat <<'MENU'
+Выберите действие:
+  1) Установить/обновить через systemd
+  2) Установить/обновить через Docker
+  3) Только переход с legacy: backup + удалить старые scripts/unit'ы
+  4) Удалить hybrid-установку
+  5) Выйти
+MENU
+    local choice
+    read -r -p "Номер действия [1-5]: " choice
+    case "$choice" in
+      1) install_or_update_systemd ;;
+      2) install_or_update_docker ;;
+      3) TARGET_ROOT="$(ask_value "Каталог для migration-backups" "$TARGET_ROOT")"; cleanup_legacy ;;
+      4) uninstall_hybrid ;;
+      5|q|quit|exit) exit 0 ;;
+      *) log "Неизвестный выбор: $choice" ;;
+    esac
+  done
+}
+
+case "${1:-}" in
+  systemd) install_or_update_systemd ;;
+  docker) install_or_update_docker ;;
+  legacy-cleanup|migrate-legacy) TARGET_ROOT="$(ask_value "Каталог для migration-backups" "$TARGET_ROOT")"; cleanup_legacy ;;
+  uninstall|remove) uninstall_hybrid ;;
+  ""|menu) main_menu ;;
+  *)
+    cat <<EOF
+Usage:
+  $0                 # interactive menu
+  $0 systemd         # install/update systemd deployment
+  $0 docker          # install/update docker deployment
+  $0 migrate-legacy  # backup and remove legacy scripts/units
+  $0 uninstall       # remove hybrid deployment
+
+Environment:
+  TARGET_ROOT=$TARGET_ROOT
+  SOURCE_ROOT=${SOURCE_ROOT:-auto}
+  DEFAULT_GIT_URL=$DEFAULT_GIT_URL
+  DEFAULT_GIT_REF=$DEFAULT_GIT_REF
+EOF
+    exit 2
+    ;;
+esac

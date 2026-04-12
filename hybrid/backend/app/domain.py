@@ -11,6 +11,7 @@ from typing import Any
 VALID_TRANSFER_MODES = {"copy", "sync"}
 VALID_JOB_KINDS = {"backup", "command"}
 VALID_SCHEDULE_MODES = {"manual", "interval", "daily", "weekly"}
+VALID_EXCLUDE_PATH_KINDS = {"directory", "file"}
 DISABLED_BWLIMIT_VALUES = {"off", "none", "unlimited", "disabled", "0", "0b", "0k", "0m", "0g"}
 VALID_DEBUG_DUMP_VALUES = {"headers", "headers,bodies"}
 SINGLETON_RCLONE_FLAGS = {
@@ -96,6 +97,69 @@ def _append_singleton_arg(args: list[str], flag: str, value: str | int | float |
         return
     rendered = f"{value:g}" if isinstance(value, float) else str(value)
     args.extend([flag, rendered])
+
+
+@dataclass(frozen=True)
+class ExcludePathEntry:
+    path: str
+    kind: str = "directory"
+
+    def normalized(self) -> ExcludePathEntry:
+        normalized_path = str(self.path or "").strip()
+        normalized_kind = str(self.kind or "directory").strip().lower()
+        if normalized_kind not in VALID_EXCLUDE_PATH_KINDS:
+            normalized_kind = "directory"
+        if normalized_path.endswith("/") and normalized_path != "/":
+            normalized_path = normalized_path.rstrip("/")
+        return ExcludePathEntry(path=normalized_path, kind=normalized_kind)
+
+
+def _normalize_exclude_path_entry(raw: Any) -> ExcludePathEntry | None:
+    if isinstance(raw, ExcludePathEntry):
+        normalized = raw.normalized()
+    elif isinstance(raw, dict):
+        normalized = ExcludePathEntry(
+            path=str(raw.get("path", "")).strip(),
+            kind=str(raw.get("kind", "directory")).strip().lower(),
+        ).normalized()
+    elif isinstance(raw, str):
+        stripped = raw.strip()
+        normalized = ExcludePathEntry(
+            path=stripped.rstrip("/") if stripped.endswith("/") and stripped != "/" else stripped,
+            kind="directory" if stripped.endswith("/") else "file",
+        ).normalized()
+    else:
+        return None
+    return normalized if normalized.path else None
+
+
+def _exclude_path_patterns(entries: list[ExcludePathEntry], source_path: str | None) -> list[str]:
+    base_path = str(source_path or "").strip()
+    if not base_path:
+        return []
+    try:
+        source_root = Path(base_path).expanduser().resolve(strict=False)
+    except OSError:
+        return []
+    patterns: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        normalized = entry.normalized()
+        if not normalized.path:
+            continue
+        try:
+            target_path = Path(normalized.path).expanduser().resolve(strict=False)
+            relative = target_path.relative_to(source_root)
+        except (OSError, ValueError):
+            continue
+        relative_path = relative.as_posix().strip()
+        if not relative_path or relative_path == ".":
+            continue
+        pattern = f"{relative_path.rstrip('/')}/**" if normalized.kind == "directory" else relative_path
+        if pattern not in seen:
+            patterns.append(pattern)
+            seen.add(pattern)
+    return patterns
 
 
 def normalize_single_value_flags(argv: list[str]) -> list[str]:
@@ -217,6 +281,7 @@ class BackupOptions:
     debug_dump: str | None = None
     mailru_safe_preset: bool = False
     exclude: list[str] = field(default_factory=list)
+    exclude_paths: list[ExcludePathEntry] = field(default_factory=list)
     extra_args: list[str] = field(default_factory=list)
 
     def normalized(self) -> BackupOptions:
@@ -235,13 +300,18 @@ class BackupOptions:
             debug_dump=_normalize_debug_dump(self.debug_dump),
             mailru_safe_preset=bool(self.mailru_safe_preset),
             exclude=[str(item).strip() for item in self.exclude if str(item).strip()],
+            exclude_paths=[
+                entry
+                for raw in self.exclude_paths
+                if (entry := _normalize_exclude_path_entry(raw)) is not None
+            ],
             extra_args=[str(item).strip() for item in self.extra_args if str(item).strip()],
         )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self.normalized())
 
-    def to_args(self, *, transfer_mode: str | None = None) -> list[str]:
+    def to_args(self, *, transfer_mode: str | None = None, source_path: str | None = None) -> list[str]:
         options = self.normalized()
         transfers = options.transfers if options.transfers is not None else (1 if options.mailru_safe_preset else None)
         checkers = options.checkers if options.checkers is not None else (1 if options.mailru_safe_preset else None)
@@ -254,7 +324,7 @@ class BackupOptions:
             args.extend(["--max-age", options.max_age])
         if options.min_age:
             args.extend(["--min-age", options.min_age])
-        for pattern in options.exclude:
+        for pattern in [*options.exclude, *_exclude_path_patterns(options.exclude_paths, source_path)]:
             args.extend(["--exclude", pattern])
         _append_singleton_arg(args, "--transfers", transfers)
         _append_singleton_arg(args, "--checkers", checkers)
@@ -641,7 +711,7 @@ class JobDefinition:
             source_path,
             destination_path,
             *DEFAULT_RCLONE_ARGS,
-            *options.to_args(transfer_mode=transfer_mode),
+            *options.to_args(transfer_mode=transfer_mode, source_path=source_path),
         ]
         return apply_rclone_bwlimit(normalize_single_value_flags(command), bandwidth_limit)
 

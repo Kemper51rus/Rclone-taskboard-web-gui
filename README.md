@@ -6,6 +6,27 @@
 
 ---
 
+## Быстрая установка
+
+Единый installer: [`scripts/install.sh`](https://github.com/Kemper51rus/Rclone-Commander-web-gui/blob/main/scripts/install.sh).
+
+Запуск напрямую из GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Kemper51rus/Rclone-Commander-web-gui/main/scripts/install.sh -o /tmp/rclone-commander-install.sh
+sudo bash /tmp/rclone-commander-install.sh
+```
+
+Или после клонирования репозитория:
+
+```bash
+git clone https://github.com/Kemper51rus/Rclone-Commander-web-gui.git
+cd Rclone-Commander-web-gui
+sudo ./scripts/install.sh
+```
+
+---
+
 ## 📚 Table of Contents
 
 - [✨ Возможности](#-возможности)
@@ -140,21 +161,18 @@ docker compose --env-file .env.docker up -d --build
 #### Быстрый старт
 
 ```bash
-cp hybrid/.env.systemd.example hybrid/.env
-./scripts/install-hybrid-systemd.sh /opt/rclone-hybrid
-systemctl enable --now rclone-hybrid-web.service
+sudo ./scripts/install.sh systemd
 ```
 
 #### Переход со старого external watcher
 
-Если раньше использовался отдельный `rclone-watch-hybrid.service`, после обновления достаточно один раз выполнить:
+Если раньше использовался legacy pipeline или отдельный `rclone-watch-hybrid.service`, после обновления достаточно один раз выполнить:
 
 ```bash
-/opt/rclone-hybrid/scripts/migrate-embedded-watcher-systemd.sh /opt/rclone-hybrid
-systemctl restart rclone-hybrid-web.service
+sudo ./scripts/install.sh migrate-legacy
 ```
 
-Скрипт остановит и отключит старый watcher-service, удалит устаревший unit-файл при наличии и оставит только встроенный watcher внутри backend.
+Скрипт сделает backup, остановит и отключит старые unit'ы, удалит устаревшие scripts/unit'ы при наличии и оставит только встроенный watcher внутри backend.
 
 ---
 
@@ -296,11 +314,7 @@ curl -X POST http://127.0.0.1:8080/api/triggers/event \
 ### Установка через scripts
 
 ```bash
-./scripts/install-hybrid-docker.sh /opt/rclone-hybrid
-```
-
-```bash
-./scripts/install-hybrid-systemd.sh /opt/rclone-hybrid
+sudo ./scripts/install.sh
 ```
 
 ## ❓ FAQ

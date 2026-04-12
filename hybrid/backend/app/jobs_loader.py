@@ -478,6 +478,7 @@ def _extract_backup_fields(raw: dict[str, Any]) -> tuple[str, str, str, BackupOp
             debug_dump=raw_options.get("debug_dump"),
             mailru_safe_preset=bool(raw_options.get("mailru_safe_preset", False)),
             exclude=list(raw_options.get("exclude", [])),
+            exclude_paths=list(raw_options.get("exclude_paths", [])),
             extra_args=list(raw_options.get("extra_args", [])),
         )
     return source_path, destination_path, transfer_mode, options.normalized()

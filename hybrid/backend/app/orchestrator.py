@@ -250,6 +250,17 @@ class Orchestrator:
                 except ValueError:
                     pass
 
+            if self.catalog.queues.allow_event_queueing and self.storage.has_open_run_for_job(job.key):
+                job_results.append(
+                    {
+                        "job_key": job.key,
+                        "accepted": False,
+                        "reason": "job_already_queued",
+                        "profile": job.profile,
+                    }
+                )
+                continue
+
             if self._event_enqueue_blocked(job.profile):
                 job_results.append(
                     {
