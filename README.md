@@ -1,7 +1,7 @@
 # 🚀 Rclone taskboard (web gui)
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Kemper51rus/Rclone-Commander-web-gui/main/taskboard/backend/app/rclone-taskboard-logo.svg" alt="Rclone taskboard (web gui)" width="260">
+  <img src="https://raw.githubusercontent.com/Kemper51rus/Rclone-taskboard-web-gui/main/taskboard/backend/app/rclone-taskboard-logo.svg" alt="Rclone taskboard (web gui)" width="260">
 </p>
 
 Веб-панель для управления backup-задачами на базе `rclone`.
@@ -15,7 +15,7 @@
 Запуск напрямую из GitHub:
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/Kemper51rus/Rclone-Commander-web-gui/main/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/Kemper51rus/Rclone-taskboard-web-gui/main/install.sh)
 ```
 
 ---
