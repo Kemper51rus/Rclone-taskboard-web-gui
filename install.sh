@@ -13,6 +13,10 @@ DOCKER_CONTAINER_NAME="${DOCKER_CONTAINER_NAME:-rclone-taskboard}"
 STATE_DIR="${STATE_DIR:-/var/lib/rclone-taskboard-installer}"
 APT_INSTALLED_RECORD="$STATE_DIR/apt-installed-by-install-sh.txt"
 
+USE_STANDARD_SETTINGS="${USE_STANDARD_SETTINGS:-}"
+STANDARD_SETTINGS_INITIALIZED=0
+PYTHON_VENV_CHECK_CACHE=""
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
 SCRIPT_ARGS=("$@")
@@ -90,6 +94,59 @@ need_root() {
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
+}
+
+use_standard_settings() {
+  case "${USE_STANDARD_SETTINGS,,}" in
+    1|y|yes|true|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+initialize_install_preferences() {
+  (( STANDARD_SETTINGS_INITIALIZED == 1 )) && return 0
+  STANDARD_SETTINGS_INITIALIZED=1
+
+  if [[ -n "$USE_STANDARD_SETTINGS" ]]; then
+    if use_standard_settings; then
+      log_ok "Выбран режим стандартной установки: пути и зависимости будут обработаны автоматически."
+    else
+      log "Выбран режим ручной настройки."
+    fi
+    return 0
+  fi
+
+  if confirm "Использовать стандартные настройки установки?" "yes"; then
+    USE_STANDARD_SETTINGS="yes"
+    log_ok "Стандартные настройки включены."
+  else
+    USE_STANDARD_SETTINGS="no"
+    log "Будет использован режим ручной настройки."
+  fi
+}
+
+ask_value_maybe_auto() {
+  local prompt="$1"
+  local default="$2"
+  if use_standard_settings; then
+    log "$prompt [$default]: auto"
+    printf '%s\n' "$default"
+    return 0
+  fi
+  ask_value "$prompt" "$default"
+}
+
+confirm_maybe_auto() {
+  local prompt="$1"
+  local default="${2:-no}"
+  if use_standard_settings; then
+    local suffix="[y/N]"
+    [[ "$default" == "yes" ]] && suffix="[Y/n]"
+    log "$prompt $suffix auto: $default"
+    [[ "$default" == "yes" ]]
+    return
+  fi
+  confirm "$prompt" "$default"
 }
 
 confirm() {
@@ -200,7 +257,22 @@ package_for_command() {
 }
 
 check_python_venv() {
-  "$PYTHON_BIN" -m venv --help >/dev/null 2>&1
+  if [[ -n "$PYTHON_VENV_CHECK_CACHE" ]]; then
+    [[ "$PYTHON_VENV_CHECK_CACHE" == "ok" ]]
+    return
+  fi
+
+  local tmpdir
+  tmpdir="$(mktemp -d /tmp/rclone-taskboard-venv-check.XXXXXX)"
+  if "$PYTHON_BIN" -m venv "$tmpdir/venv" >/dev/null 2>&1; then
+    PYTHON_VENV_CHECK_CACHE="ok"
+    rm -rf "$tmpdir"
+    return 0
+  fi
+
+  PYTHON_VENV_CHECK_CACHE="missing"
+  rm -rf "$tmpdir"
+  return 1
 }
 
 ensure_dependencies() {
@@ -232,7 +304,7 @@ ensure_dependencies() {
   fi
 
   log_warn "Не хватает зависимостей для режима '$mode': ${missing_packages[*]}"
-  if confirm "Доустановить зависимости автоматически?" "yes"; then
+  if confirm_maybe_auto "Доустановить зависимости автоматически?" "yes"; then
     install_packages "${missing_packages[@]}"
   else
     die "Установка остановлена: не хватает зависимостей."
@@ -258,22 +330,26 @@ default_source_root() {
 }
 
 prepare_source_checkout() {
-  local chosen_source
-  chosen_source="$(ask_value "Git checkout с исходниками" "${SOURCE_ROOT:-$(default_source_root)}")"
+  local chosen_source git_url git_ref
+  chosen_source="$(ask_value_maybe_auto "Git checkout с исходниками" "${SOURCE_ROOT:-$(default_source_root)}")"
   SOURCE_ROOT="$chosen_source"
+
+  if use_standard_settings; then
+    git_url="$DEFAULT_GIT_URL"
+    git_ref="$DEFAULT_GIT_REF"
+  else
+    git_url="$(ask_value "Git URL репозитория" "$DEFAULT_GIT_URL")"
+    git_ref="$(ask_value "Git branch/tag" "$DEFAULT_GIT_REF")"
+  fi
 
   if [[ -d "$SOURCE_ROOT/.git" ]]; then
     log "Используется существующий Git checkout: $SOURCE_ROOT"
-    if confirm "Обновить checkout из Git перед установкой?" "yes"; then
+    if confirm_maybe_auto "Обновить checkout из Git перед установкой?" "yes"; then
       git -C "$SOURCE_ROOT" fetch --all --prune
-      git -C "$SOURCE_ROOT" checkout "$DEFAULT_GIT_REF"
+      git -C "$SOURCE_ROOT" checkout "$git_ref"
       git -C "$SOURCE_ROOT" pull --ff-only
     fi
   else
-    local git_url
-    git_url="$(ask_value "Git URL репозитория" "$DEFAULT_GIT_URL")"
-    local git_ref
-    git_ref="$(ask_value "Git branch/tag" "$DEFAULT_GIT_REF")"
     if [[ -e "$SOURCE_ROOT" ]]; then
       die "$SOURCE_ROOT уже существует, но это не Git checkout. Укажите другой SOURCE_ROOT или удалите каталог вручную."
     fi
@@ -372,12 +448,13 @@ remove_obsolete_embedded_watcher_unit() {
 }
 
 install_or_update_systemd() {
+  initialize_install_preferences
   need_root
-  TARGET_ROOT="$(ask_value "Каталог установки runtime" "$TARGET_ROOT")"
+  TARGET_ROOT="$(ask_value_maybe_auto "Каталог установки runtime" "$TARGET_ROOT")"
   ensure_dependencies systemd
   prepare_source_checkout
 
-  if confirm "Выполнить переход с legacy и удалить старые скрипты/unit'ы?" "no"; then
+  if confirm_maybe_auto "Выполнить переход с legacy и удалить старые скрипты/unit'ы?" "no"; then
     cleanup_legacy
   fi
 
@@ -402,12 +479,13 @@ install_or_update_systemd() {
 }
 
 install_or_update_docker() {
+  initialize_install_preferences
   need_root
-  TARGET_ROOT="$(ask_value "Каталог установки runtime" "$TARGET_ROOT")"
+  TARGET_ROOT="$(ask_value_maybe_auto "Каталог установки runtime" "$TARGET_ROOT")"
   ensure_dependencies docker
   prepare_source_checkout
 
-  if confirm "Выполнить переход с legacy и удалить старые скрипты/unit'ы?" "no"; then
+  if confirm_maybe_auto "Выполнить переход с legacy и удалить старые скрипты/unit'ы?" "no"; then
     cleanup_legacy
   fi
 
@@ -548,6 +626,15 @@ print_dependency_status() {
     fi
     printf '    - %-14s : %b (pkg: %s)\n' "$command_name" "$status_line" "$package_name"
   done
+
+  if command_exists "$PYTHON_BIN"; then
+    if check_python_venv; then
+      status_line="${C_GREEN}ok${C_RESET}"
+    else
+      status_line="${C_RED}missing${C_RESET}"
+    fi
+    printf '    - %-14s : %b (pkg: %s)\n' "python3-venv" "$status_line" "python3-venv"
+  fi
 }
 
 print_docker_status() {
