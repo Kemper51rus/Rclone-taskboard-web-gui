@@ -658,8 +658,10 @@ cleanup_legacy() {
 
   install -d "$backup_root"
   for unit in "${LEGACY_UNITS[@]}"; do
-    systemctl cat "$unit" > "$backup_root/${unit}.systemctl-cat.txt" 2>/dev/null || true
-    systemctl status "$unit" --no-pager > "$backup_root/${unit}.status.txt" 2>/dev/null || true
+    if has_working_systemd; then
+      systemctl cat "$unit" > "$backup_root/${unit}.systemctl-cat.txt" 2>/dev/null || true
+      systemctl status "$unit" --no-pager > "$backup_root/${unit}.status.txt" 2>/dev/null || true
+    fi
     backup_path "$backup_root" "$SYSTEMD_DIR/$unit"
   done
   for path in "${LEGACY_FILES[@]}" "${legacy_backups[@]}"; do
@@ -667,13 +669,19 @@ cleanup_legacy() {
   done
 
   for unit in "${LEGACY_UNITS[@]}"; do
-    systemctl disable --now "$unit" 2>/dev/null || true
+    if has_working_systemd; then
+      systemctl disable --now "$unit" 2>/dev/null || true
+    else
+      log_warn "systemd недоступен: unit $unit будет только удалён с диска."
+    fi
     rm -f "$SYSTEMD_DIR/$unit"
   done
   for path in "${LEGACY_FILES[@]}" "${legacy_backups[@]}"; do
     rm -f -- "$path"
   done
-  systemctl daemon-reload
+  if has_working_systemd; then
+    systemctl daemon-reload
+  fi
 
   log "Legacy migration завершена."
   log "Backup snapshot: $backup_root"
@@ -685,10 +693,15 @@ uninstall_taskboard() {
 
   log "Будет остановлен и отключен $SERVICE_NAME, если он установлен."
   if confirm "Продолжить удаление taskboard-служб?" "no"; then
-    systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
-    rm -f "$SYSTEMD_DIR/$SERVICE_NAME"
-    systemctl daemon-reload
-    systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
+    if has_working_systemd; then
+      systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+      rm -f "$SYSTEMD_DIR/$SERVICE_NAME"
+      systemctl daemon-reload
+      systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
+    else
+      log_warn "systemd недоступен: service не может быть остановлен через systemctl, будет только удалён unit-файл."
+      rm -f "$SYSTEMD_DIR/$SERVICE_NAME"
+    fi
   fi
 
   if [[ -f "$TARGET_ROOT/taskboard/docker-compose.yml" ]]; then
