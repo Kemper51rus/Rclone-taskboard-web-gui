@@ -245,6 +245,17 @@ ask_value_maybe_auto() {
   ask_value "$prompt" "$default"
 }
 
+ask_path_value_maybe_auto() {
+  local prompt="$1"
+  local default="$2"
+  if use_standard_settings; then
+    printf '%s\n' "$prompt [$default]: auto" >&2
+    printf '%s\n' "$default"
+    return 0
+  fi
+  ask_path_value "$prompt" "$default"
+}
+
 confirm_maybe_auto() {
   local prompt="$1"
   local default="${2:-no}"
@@ -285,6 +296,24 @@ ask_value() {
   local answer
   read -r -p "$prompt [$default]: " answer
   printf '%s\n' "${answer:-$default}"
+}
+
+ask_path_value() {
+  local prompt="$1"
+  local default="$2"
+  local answer
+  while true; do
+    answer="$(ask_value "$prompt" "$default")"
+    case "${answer,,}" in
+      y|yes|д|да|n|no|н|нет)
+        log "Для этого шага нужен путь, а не yes/no. Нажмите Enter для значения по умолчанию или укажите каталог."
+        ;;
+      *)
+        printf '%s\n' "$answer"
+        return 0
+        ;;
+    esac
+  done
 }
 
 safe_rm_rf() {
@@ -447,7 +476,7 @@ default_source_root() {
 
 prepare_source_checkout() {
   local chosen_source git_url git_ref
-  chosen_source="$(ask_value_maybe_auto "Git checkout с исходниками" "${SOURCE_ROOT:-$(default_source_root)}")"
+  chosen_source="$(ask_path_value_maybe_auto "Git checkout с исходниками" "${SOURCE_ROOT:-$(default_source_root)}")"
   SOURCE_ROOT="$chosen_source"
 
   if use_standard_settings; then
@@ -569,7 +598,7 @@ install_or_update_systemd() {
   if ! has_working_systemd; then
     die "Режим systemd недоступен: в этой системе нет рабочего systemd (PID 1). Используйте Docker или ручной запуск backend."
   fi
-  TARGET_ROOT="$(ask_value_maybe_auto "Каталог установки runtime" "$TARGET_ROOT")"
+  TARGET_ROOT="$(ask_path_value_maybe_auto "Каталог установки runtime" "$TARGET_ROOT")"
   ensure_dependencies systemd
   prepare_source_checkout
 
@@ -599,7 +628,7 @@ install_or_update_systemd() {
 install_or_update_docker() {
   initialize_install_preferences
   need_root
-  TARGET_ROOT="$(ask_value_maybe_auto "Каталог установки runtime" "$TARGET_ROOT")"
+  TARGET_ROOT="$(ask_path_value_maybe_auto "Каталог установки runtime" "$TARGET_ROOT")"
   ensure_dependencies docker
   prepare_source_checkout
 
@@ -629,6 +658,23 @@ backup_path() {
     install -d "$(dirname "$target")"
     cp -a "$source" "$target"
   fi
+}
+
+expand_purge_packages() {
+  local packages=("$@")
+  local expanded=("${packages[@]}")
+  local pkg
+
+  if printf '%s\n' "${packages[@]}" | grep -qx 'python3-venv'; then
+    while IFS= read -r pkg; do
+      [[ -n "$pkg" ]] || continue
+      expanded+=("$pkg")
+    done < <(
+      dpkg-query -W -f='${binary:Package}\n' 'python3.*-venv' 2>/dev/null         | grep -E '^python3(\.[0-9]+)?-venv$' || true
+    )
+  fi
+
+  printf '%s\n' "${expanded[@]}" | awk 'NF && !seen[$0]++'
 }
 
 cleanup_legacy() {
@@ -686,14 +732,14 @@ cleanup_legacy() {
 
 uninstall_taskboard() {
   need_root
-  TARGET_ROOT="$(ask_value "Каталог установленного runtime" "$TARGET_ROOT")"
+  TARGET_ROOT="$(ask_path_value "Каталог установленного runtime" "$TARGET_ROOT")"
 
   log "Будет остановлен и отключен $SERVICE_NAME, если он установлен."
   if confirm "Продолжить удаление taskboard-служб?" "no"; then
     if has_working_systemd; then
       systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
       rm -f "$SYSTEMD_DIR/$SERVICE_NAME"
-      systemctl daemon-reload
+      systemctl daemon-reload || true
       systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
     else
       log_warn "systemd недоступен: service не может быть остановлен через systemctl, будет только удалён unit-файл."
@@ -729,18 +775,21 @@ uninstall_taskboard() {
   fi
 
   if command_exists apt-get && [[ -f "$APT_INSTALLED_RECORD" ]]; then
-    local purge_packages=()
+    local purge_packages=() expanded_purge_packages=()
     while IFS= read -r pkg; do
       [[ -n "$pkg" ]] || continue
       purge_packages+=("$pkg")
     done < "$APT_INSTALLED_RECORD"
+
     if [[ "${#purge_packages[@]}" -gt 0 ]]; then
-      log "Найден список apt-пакетов, установленных этим скриптом: ${purge_packages[*]}"
+      mapfile -t expanded_purge_packages < <(expand_purge_packages "${purge_packages[@]}")
+      log "Найден список apt-пакетов, установленных этим скриптом: ${expanded_purge_packages[*]}"
       if confirm "Попробовать apt purge этих пакетов?" "no"; then
-        apt-get purge -y "${purge_packages[@]}" || true
-        apt-get autoremove -y || true
+        apt-get purge -y "${expanded_purge_packages[@]}" || log_warn "apt purge завершился с ошибкой."
+        apt-get autoremove -y || log_warn "apt autoremove завершился с ошибкой."
       fi
     fi
+
     if confirm "Удалить файл состояния установленных пакетов $APT_INSTALLED_RECORD?" "yes"; then
       rm -f "$APT_INSTALLED_RECORD"
     fi
@@ -844,7 +893,7 @@ MENU
         fi
         ;;
       2) install_or_update_docker ;;
-      3) TARGET_ROOT="$(ask_value "Каталог для migration-backups" "$TARGET_ROOT")"; cleanup_legacy ;;
+      3) TARGET_ROOT="$(ask_path_value "Каталог для migration-backups" "$TARGET_ROOT")"; cleanup_legacy ;;
       4) uninstall_taskboard ;;
       5|q|quit|exit) exit 0 ;;
       *) log "Неизвестный выбор: $choice" ;;
@@ -858,7 +907,7 @@ trap on_error ERR
 case "${1:-}" in
   systemd) install_or_update_systemd ;;
   docker) install_or_update_docker ;;
-  legacy-cleanup|migrate-legacy) TARGET_ROOT="$(ask_value "Каталог для migration-backups" "$TARGET_ROOT")"; cleanup_legacy ;;
+  legacy-cleanup|migrate-legacy) TARGET_ROOT="$(ask_path_value "Каталог для migration-backups" "$TARGET_ROOT")"; cleanup_legacy ;;
   uninstall|remove) uninstall_taskboard ;;
   ""|menu) main_menu ;;
   *)
