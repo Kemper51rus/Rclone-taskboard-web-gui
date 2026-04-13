@@ -65,6 +65,15 @@ log_warn() {
 
 log_err() {
   printf '%b\n' "${C_RED}ERR${C_RESET} $*"
+  printf '%b\n' "${C_GREEN}✔${C_RESET} $*"
+}
+
+log_warn() {
+  printf '%b\n' "${C_YELLOW}⚠${C_RESET} $*"
+}
+
+log_err() {
+  printf '%b\n' "${C_RED}✖${C_RESET} $*"
 }
 
 die() {
@@ -156,9 +165,7 @@ install_packages() {
       fi
     done
     log "Выполняю: apt-get update"
-    if ! apt-get update; then
-      log_warn "apt-get update завершился с ошибкой. Продолжаю установку по текущему кэшу APT."
-    fi
+    apt-get update
     log "Выполняю: apt-get install -y ${packages[*]}"
     DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
     if [[ "${#to_record[@]}" -gt 0 ]]; then
@@ -516,11 +523,7 @@ uninstall_taskboard() {
   fi
 
   if command_exists apt-get && [[ -f "$APT_INSTALLED_RECORD" ]]; then
-    local purge_packages=()
-    while IFS= read -r pkg; do
-      [[ -n "$pkg" ]] || continue
-      purge_packages+=("$pkg")
-    done < "$APT_INSTALLED_RECORD"
+    mapfile -t purge_packages < <(awk 'NF{print $1}' "$APT_INSTALLED_RECORD")
     if [[ "${#purge_packages[@]}" -gt 0 ]]; then
       log "Найден список apt-пакетов, установленных этим скриптом: ${purge_packages[*]}"
       if confirm "Попробовать apt purge этих пакетов?" "no"; then
@@ -538,8 +541,9 @@ uninstall_taskboard() {
 
 print_dependency_status() {
   local command_name package_name status_line
+  local -a base_commands=(git curl install)
   log "  зависимости:"
-  for command_name in git curl install systemctl "$PYTHON_BIN" rclone docker; do
+  for command_name in "${base_commands[@]}" systemctl "$PYTHON_BIN" rclone docker; do
     package_name="$(package_for_command "$command_name")"
     if command_exists "$command_name"; then
       status_line="${C_GREEN}ok${C_RESET}"
@@ -558,9 +562,9 @@ print_docker_status() {
   local container_state
   container_state="$(docker inspect -f '{{.State.Status}}' "$DOCKER_CONTAINER_NAME" 2>/dev/null || true)"
   if [[ -n "$container_state" ]]; then
-    log "  docker: контейнер '$DOCKER_CONTAINER_NAME' ${C_GREEN}найден${C_RESET} (state=$container_state)"
+    log "  docker: контейнер '$DOCKER_CONTAINER_NAME' найден (state=$container_state)"
   else
-    log "  docker: контейнер '$DOCKER_CONTAINER_NAME' ${C_RED}не найден${C_RESET}"
+    log "  docker: контейнер '$DOCKER_CONTAINER_NAME' не найден"
   fi
 }
 
@@ -578,6 +582,12 @@ print_status() {
   else
     log "  runtime: $TARGET_ROOT ${C_RED}не найден${C_RESET}"
   fi
+    log_ok "systemd: $SERVICE_NAME найден"
+    systemctl is-active --quiet "$SERVICE_NAME" && log "  active: yes" || log_warn "active: no"
+  else
+    log_warn "systemd: $SERVICE_NAME не найден"
+  fi
+  [[ -d "$TARGET_ROOT" ]] && log_ok "runtime: $TARGET_ROOT найден" || log_warn "runtime: $TARGET_ROOT не найден"
   print_docker_status
   print_dependency_status
   [[ -n "$SCRIPT_REPO_ROOT" ]] && log "  current git checkout: $SCRIPT_REPO_ROOT"
