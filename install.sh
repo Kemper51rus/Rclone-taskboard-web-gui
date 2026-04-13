@@ -134,7 +134,7 @@ print_access_summary() {
   printf '%b\n' "${C_CYAN}Taskboard localhost:${C_RESET} $localhost_url"
   printf '%b\n' "${C_CYAN}Taskboard LAN:${C_RESET} $dashboard_url"
 
-  if systemctl list-unit-files "$SERVICE_NAME" --no-legend >/dev/null 2>&1; then
+  if has_working_systemd && systemctl list-unit-files "$SERVICE_NAME" --no-legend >/dev/null 2>&1; then
     if systemctl is-active --quiet "$SERVICE_NAME"; then
       printf '%b\n' "${C_GREEN}Systemd service active: yes${C_RESET}"
     else
@@ -386,6 +386,13 @@ check_python_venv() {
   return 1
 }
 
+
+has_working_systemd() {
+  command_exists systemctl || return 1
+  [[ -d /run/systemd/system ]] || return 1
+  systemctl show-environment >/dev/null 2>&1
+}
+
 ensure_dependencies() {
   local mode="$1"
   local missing_packages=()
@@ -561,6 +568,9 @@ remove_obsolete_embedded_watcher_unit() {
 install_or_update_systemd() {
   initialize_install_preferences
   need_root
+  if ! has_working_systemd; then
+    die "Режим systemd недоступен: в этой системе нет рабочего systemd (PID 1). Используйте Docker или ручной запуск backend."
+  fi
   TARGET_ROOT="$(ask_value_maybe_auto "Каталог установки runtime" "$TARGET_ROOT")"
   ensure_dependencies systemd
   prepare_source_checkout
@@ -738,6 +748,13 @@ print_dependency_status() {
     printf '    - %-14s : %b (pkg: %s)\n' "$command_name" "$status_line" "$package_name"
   done
 
+  if has_working_systemd; then
+    status_line="${C_GREEN}ok${C_RESET}"
+  else
+    status_line="${C_RED}unavailable${C_RESET}"
+  fi
+  printf '    - %-14s : %b\n' "systemd-host" "$status_line"
+
   if command_exists "$PYTHON_BIN"; then
     if check_python_venv; then
       status_line="${C_GREEN}ok${C_RESET}"
@@ -762,12 +779,17 @@ print_docker_status() {
 print_status() {
   log ""
   log_section "Текущий статус"
-  if systemctl list-unit-files "$SERVICE_NAME" --no-legend >/dev/null 2>&1; then
-    log "  systemd: $SERVICE_NAME ${C_GREEN}найден${C_RESET}"
-    systemctl is-active --quiet "$SERVICE_NAME" && log "  active: yes" || log_warn "active: no"
-  fi
-  if ! systemctl list-unit-files "$SERVICE_NAME" --no-legend >/dev/null 2>&1; then
-    log "  systemd: $SERVICE_NAME ${C_RED}не найден${C_RESET}"
+  if has_working_systemd; then
+    log "  systemd host: ${C_GREEN}доступен${C_RESET}"
+    if systemctl list-unit-files "$SERVICE_NAME" --no-legend >/dev/null 2>&1; then
+      log "  systemd unit: $SERVICE_NAME ${C_GREEN}найден${C_RESET}"
+      systemctl is-active --quiet "$SERVICE_NAME" && log "  active: yes" || log_warn "active: no"
+    else
+      log "  systemd unit: $SERVICE_NAME ${C_RED}не найден${C_RESET}"
+    fi
+  else
+    log "  systemd host: ${C_RED}недоступен${C_RESET} (${C_DIM}нет рабочего systemd / PID 1${C_RESET})"
+    log "  systemd unit: проверка пропущена"
   fi
   [[ -d "$TARGET_ROOT" ]] \
     && log "  runtime: $TARGET_ROOT ${C_GREEN}найден${C_RESET}" \
@@ -780,10 +802,18 @@ print_status() {
 
 main_menu() {
   while true; do
+    local systemd_menu_line
     print_status
+    if has_working_systemd; then
+      systemd_menu_line="  1) Установить/обновить через systemd"
+    else
+      systemd_menu_line="  ${C_DIM}${C_RED}1) Установить/обновить через systemd [недоступно: нет рабочего systemd]${C_RESET}"
+    fi
+    printf '%s
+' "Выберите действие:"
+    printf '%b
+' "$systemd_menu_line"
     cat <<'MENU'
-Выберите действие:
-  1) Установить/обновить через systemd
   2) Установить/обновить через Docker
   3) Только переход с legacy: backup + удалить старые legacy-скрипты и unit'ы
   4) Удалить taskboard-установку
@@ -792,7 +822,13 @@ MENU
     local choice
     read -r -p "Номер действия [1-5]: " choice
     case "$choice" in
-      1) install_or_update_systemd ;;
+      1)
+        if has_working_systemd; then
+          install_or_update_systemd
+        else
+          log_err "Пункт 1 недоступен: в этой системе нет рабочего systemd."
+        fi
+        ;;
       2) install_or_update_docker ;;
       3) TARGET_ROOT="$(ask_value "Каталог для migration-backups" "$TARGET_ROOT")"; cleanup_legacy ;;
       4) uninstall_taskboard ;;
