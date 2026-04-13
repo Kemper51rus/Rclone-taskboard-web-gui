@@ -115,10 +115,9 @@ first_local_ipv4() {
 print_access_summary() {
   local mode="$1"
   local dashboard_port="8080"
-  local primary_ip dashboard_url localhost_url rclone_url
+  local primary_ip dashboard_url rclone_url
 
   primary_ip="$(first_local_ipv4)"
-  localhost_url="http://127.0.0.1:${dashboard_port}/"
   if [[ -n "$primary_ip" ]]; then
     dashboard_url="http://${primary_ip}:${dashboard_port}/"
   else
@@ -131,7 +130,6 @@ print_access_summary() {
   printf '%b\n' "${C_CYAN}Режим:${C_RESET} $mode"
   printf '%b\n' "${C_CYAN}Runtime:${C_RESET} $TARGET_ROOT"
   printf '%b\n' "${C_CYAN}Сервис:${C_RESET} $SERVICE_NAME"
-  printf '%b\n' "${C_CYAN}Taskboard localhost:${C_RESET} $localhost_url"
   printf '%b\n' "${C_CYAN}Taskboard LAN:${C_RESET} $dashboard_url"
 
   if has_working_systemd && systemctl list-unit-files "$SERVICE_NAME" --no-legend >/dev/null 2>&1; then
@@ -155,8 +153,8 @@ print_access_summary() {
     fi
   fi
 
-  printf '%b\n' "${C_CYAN}Health:${C_RESET} ${localhost_url}api/health"
   print_separator
+  printf '%b\n' "${C_GREEN}Успешного применения Rclone taskboard в ваших задачах.${C_RESET}"
 }
 
 print_failure_summary() {
@@ -596,7 +594,6 @@ install_or_update_systemd() {
 
   log "Systemd установка/обновление завершены."
   print_access_summary "systemd"
-  systemctl status "$SERVICE_NAME" --no-pager || true
 }
 
 install_or_update_docker() {
