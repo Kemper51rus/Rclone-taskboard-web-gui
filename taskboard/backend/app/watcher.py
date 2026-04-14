@@ -25,7 +25,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - fallback for stale loca
     class FileSystemEventHandler:  # type: ignore[no-redef]
         pass
 
-from .domain import JobCatalog, path_is_within
+from .domain import JobCatalog, path_is_excluded_from_backup, path_is_within
 
 
 logger = logging.getLogger(__name__)
@@ -190,13 +190,7 @@ class FilesystemWatcher:
             str(details.get("src_path") or "").strip(),
             str(details.get("dest_path") or "").strip(),
         ]
-        if not any(
-            path_is_within(item["path"], candidate)
-            for item in self._entries
-            if item["active"]
-            for candidate in candidate_paths
-            if candidate
-        ):
+        if not self._matches_active_non_excluded_entry(candidate_paths):
             return
         self._last_event_seen_at = utc_now_iso()
         try:
@@ -204,3 +198,22 @@ class FilesystemWatcher:
         except Exception as exc:
             self._last_error = str(exc)
             logger.exception("filesystem watcher callback failed")
+
+    def _matches_active_non_excluded_entry(self, candidate_paths: list[str]) -> bool:
+        for item in self._entries:
+            if not item["active"]:
+                continue
+            job = self.catalog.get_job(str(item.get("job_key") or ""))
+            if not job:
+                continue
+            for candidate in candidate_paths:
+                if not candidate or not path_is_within(item["path"], candidate):
+                    continue
+                if path_is_excluded_from_backup(
+                    source_path=job.source_path,
+                    target_path=candidate,
+                    options=job.options,
+                ):
+                    continue
+                return True
+        return False

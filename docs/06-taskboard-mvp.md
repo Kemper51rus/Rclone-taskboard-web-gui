@@ -41,6 +41,7 @@ Catalog содержит:
 - structured `rclone`-опции у backup и retention:
   `transfers`, `checkers`, `tpslimit`, `tpslimit_burst`, `retries`, `low_level_retries`,
   `retries_sleep`, `fast_list`, `no_traverse`, `debug_dump`, `extra_args`
+- принудительное включение step-лога `rclone` для отдельной backup-задачи через `force_rclone_log`
 - `exclude patterns` с масками `rclone`, например `*.tmp`, `vzdump-qemu-400*`, `**/cache/**`
 - `exclude_paths` для выбора нескольких файлов или каталогов внутри исходного каталога
 - `Mail.ru safe preset` для снижения параллелизма и частоты API-запросов
@@ -69,6 +70,7 @@ Catalog содержит:
 - глобальное включение watcher
 - debounce между повторами событий
 - включение watcher у отдельных backup-задач
+- watcher учитывает `exclude patterns` и `exclude_paths` backup-задачи перед постановкой запуска в очередь
 
 ### Clouds
 

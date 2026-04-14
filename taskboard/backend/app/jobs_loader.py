@@ -477,6 +477,7 @@ def _extract_backup_fields(raw: dict[str, Any]) -> tuple[str, str, str, BackupOp
             no_traverse=bool(raw_options.get("no_traverse", False)),
             debug_dump=raw_options.get("debug_dump"),
             mailru_safe_preset=bool(raw_options.get("mailru_safe_preset", False)),
+            force_rclone_log=bool(raw_options.get("force_rclone_log", False)),
             exclude=list(raw_options.get("exclude", [])),
             exclude_paths=list(raw_options.get("exclude_paths", [])),
             extra_args=list(raw_options.get("extra_args", [])),
@@ -580,6 +581,7 @@ def _extract_options_from_command(args: list[str]) -> BackupOptions:
         fast_list=fast_list,
         no_traverse=no_traverse,
         debug_dump=debug_dump,
+        force_rclone_log=False,
         exclude=exclude,
         extra_args=extra_args,
     )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from fnmatch import fnmatchcase
 from pathlib import Path
 import shlex
 import threading
@@ -162,6 +163,96 @@ def _exclude_path_patterns(entries: list[ExcludePathEntry], source_path: str | N
     return patterns
 
 
+def _normalize_exclude_pattern(pattern: str) -> str:
+    normalized = str(pattern or "").strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized.lstrip("/")
+
+
+def _candidate_relative_paths(source_path: str | None, target_path: str | None) -> list[str]:
+    def normalize_for_pattern_match(path: str | None, *, resolve: bool) -> str | None:
+        raw_path = str(path or "").strip()
+        if not raw_path:
+            return None
+        candidate = Path(raw_path).expanduser()
+        try:
+            normalized = candidate.resolve(strict=False) if resolve else candidate.absolute()
+        except OSError:
+            normalized = candidate.absolute()
+        value = normalized.as_posix()
+        return value.rstrip("/") if value != "/" else value
+
+    relatives: list[str] = []
+    for resolve in (False, True):
+        normalized_source = normalize_for_pattern_match(source_path, resolve=resolve)
+        normalized_target = normalize_for_pattern_match(target_path, resolve=resolve)
+        if not normalized_source or not normalized_target:
+            continue
+        if normalized_target == normalized_source:
+            relatives.append(".")
+            continue
+        if normalized_target.startswith(f"{normalized_source}/"):
+            relative = normalized_target[len(normalized_source) + 1 :].strip("/")
+            if relative:
+                relatives.append(relative)
+
+    parts: list[str] = []
+    for relative in relatives:
+        parts.append(relative)
+        if "/" in relative:
+            parts.append(relative.rsplit("/", 1)[-1])
+    return list(dict.fromkeys(parts))
+
+
+def _rclone_exclude_pattern_matches(pattern: str, relative_path: str) -> bool:
+    normalized_pattern = _normalize_exclude_pattern(pattern)
+    normalized_relative = _normalize_exclude_pattern(relative_path)
+    if not normalized_pattern or not normalized_relative:
+        return False
+    if normalized_pattern.startswith("**/") and _rclone_exclude_pattern_matches(
+        normalized_pattern[3:],
+        normalized_relative,
+    ):
+        return True
+    if normalized_pattern.endswith("/**"):
+        directory = normalized_pattern[:-3].rstrip("/")
+        if directory.startswith("**/"):
+            suffix = directory[3:]
+            return normalized_relative == suffix or normalized_relative.endswith(
+                f"/{suffix}"
+            ) or f"/{suffix}/" in normalized_relative
+        return normalized_relative == directory or normalized_relative.startswith(f"{directory}/")
+    if normalized_pattern.endswith("/"):
+        directory = normalized_pattern.rstrip("/")
+        return normalized_relative == directory or normalized_relative.startswith(f"{directory}/")
+    if "/" not in normalized_pattern:
+        basename = normalized_relative.rsplit("/", 1)[-1]
+        return fnmatchcase(basename, normalized_pattern)
+    return fnmatchcase(normalized_relative, normalized_pattern)
+
+
+def path_is_excluded_from_backup(
+    *,
+    source_path: str | None,
+    target_path: str | None,
+    options: BackupOptions,
+) -> bool:
+    relative_paths = _candidate_relative_paths(source_path, target_path)
+    if not relative_paths:
+        return False
+    normalized_options = options.normalized()
+    patterns = [
+        *normalized_options.exclude,
+        *_exclude_path_patterns(normalized_options.exclude_paths, source_path),
+    ]
+    return any(
+        _rclone_exclude_pattern_matches(pattern, relative_path)
+        for pattern in patterns
+        for relative_path in relative_paths
+    )
+
+
 def normalize_single_value_flags(argv: list[str]) -> list[str]:
     entries: list[list[str] | None] = []
     latest_positions: dict[str, int] = {}
@@ -280,6 +371,7 @@ class BackupOptions:
     no_traverse: bool = False
     debug_dump: str | None = None
     mailru_safe_preset: bool = False
+    force_rclone_log: bool = False
     exclude: list[str] = field(default_factory=list)
     exclude_paths: list[ExcludePathEntry] = field(default_factory=list)
     extra_args: list[str] = field(default_factory=list)
@@ -299,6 +391,7 @@ class BackupOptions:
             no_traverse=bool(self.no_traverse),
             debug_dump=_normalize_debug_dump(self.debug_dump),
             mailru_safe_preset=bool(self.mailru_safe_preset),
+            force_rclone_log=bool(self.force_rclone_log),
             exclude=[str(item).strip() for item in self.exclude if str(item).strip()],
             exclude_paths=[
                 entry

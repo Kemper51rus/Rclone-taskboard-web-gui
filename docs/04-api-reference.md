@@ -166,6 +166,7 @@ Cloud settings читаются из `rclone.conf`, но приложение с
 - `backup.options` и `retention` поддерживают structured `rclone`-поля:
   `transfers`, `checkers`, `tpslimit`, `tpslimit_burst`, `retries`, `low_level_retries`,
   `retries_sleep`, `fast_list`, `no_traverse`, `debug_dump`, `mailru_safe_preset`, `exclude`, `extra_args`
+- `backup.options.force_rclone_log` принудительно включает step-лог `rclone` для конкретной backup-задачи без включения глобального логирования
 - `backup.options.exclude_paths` поддерживает path-исключения вида `{"path": "/abs/path", "kind": "file|directory"}`; путь должен быть внутри `source_path`
 
 ---

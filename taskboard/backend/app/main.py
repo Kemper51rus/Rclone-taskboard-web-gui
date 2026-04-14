@@ -307,6 +307,7 @@ class BackupOptionsPayload(BaseModel):
     no_traverse: bool = False
     debug_dump: str | None = None
     mailru_safe_preset: bool = False
+    force_rclone_log: bool = False
     exclude: list[str] = Field(default_factory=list)
     exclude_paths: list[ExcludePathEntryPayload] = Field(default_factory=list)
     extra_args: list[str] = Field(default_factory=list)

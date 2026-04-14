@@ -1267,6 +1267,13 @@
       align-items: center;
       margin-top: 12px;
     }
+    .watcher-exclude-details .exclude-path-item {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+    .watcher-exclude-details .exclude-path-value {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -1742,6 +1749,9 @@
               <div class="field">
                 <button type="button" class="toggle-chip" id="jobNoTraverse" aria-pressed="false">no-traverse</button>
               </div>
+              <div class="field">
+                <button type="button" class="toggle-chip" id="jobForceRcloneLog" aria-pressed="false">Писать лог для задачи</button>
+              </div>
               <div class="field full">
                 <div class="field-meta" id="mailruOptionsHint"></div>
               </div>
@@ -2012,6 +2022,7 @@
             <small>Watcher работает внутри backend и следит только за теми backup-задачами, у которых включено наблюдение за исходным каталогом.</small>
             <div class="field-meta" id="watcherRuntimeSummary" style="margin-top:8px;"></div>
             <div class="clouds-list" id="watcherJobsList" style="margin-top:14px;"></div>
+            <div id="watcherJobDetails" style="margin-top:12px;"></div>
           </div>
         </section>
 
@@ -2110,6 +2121,7 @@
       watcher: { enabled: false, debounce_seconds: 45 },
       watcherRuntime: { component_running: false, observer_running: false, configured_jobs: 0, active_jobs: 0, jobs: [], active_paths: [] },
       selectedQueueKey: null,
+      selectedWatcherJobKey: null,
       showClouds: false,
       showGotify: false,
       showQueues: false,
@@ -2601,6 +2613,7 @@
         const meta = copyProgressSummary(item);
         const antiBotDelay = item.delayed_by_antibot ? antiBotDelayLabel(state.lastSnapshot?.next_copy_start_at) : "";
         const progressValue = percent === null ? "..." : `${percent}%`;
+        const logButtonActive = item.log_step_id && Number(item.log_step_id) === Number(state.selectedRcloneLogStepId);
         return `
           <article class="copy-progress-item">
             <div class="copy-progress-head">
@@ -2621,7 +2634,7 @@
               <strong>${escapeHtml(progressValue)}</strong>
             </div>
             <div class="copy-progress-actions">
-              ${item.log_step_id ? `<button type="button" class="secondary" onclick="openRcloneLog(${item.log_step_id})">Лог</button>` : ""}
+              ${item.log_step_id ? `<button type="button" class="secondary ${logButtonActive ? "is-active" : ""}" onclick="openRcloneLog(${item.log_step_id})" title="${logButtonActive ? "Этот лог открыт" : "Открыть лог"}">Лог</button>` : ""}
               <button type="button" class="secondary" onclick="controlCopyStep(${item.step_id}, 'pause')" ${item.can_pause ? "" : "disabled"}>Пауза</button>
               <button type="button" class="secondary" onclick="controlCopyStep(${item.step_id}, 'resume')" ${item.can_resume ? "" : "disabled"}>Плей</button>
               <button type="button" class="ghost" onclick="controlCopyStep(${item.step_id}, 'stop')" ${item.can_stop ? "" : "disabled"}>Стоп</button>
@@ -3408,12 +3421,98 @@
         .sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
     }
 
+    function normalizeExcludePattern(pattern) {
+      let normalized = String(pattern || "").trim().replaceAll("\\", "/");
+      while (normalized.startsWith("./")) {
+        normalized = normalized.slice(2);
+      }
+      while (normalized.startsWith("/")) {
+        normalized = normalized.slice(1);
+      }
+      return normalized;
+    }
+
+    function watcherExcludeDisplayPath(sourcePath, pattern) {
+      const source = normalizePosixPath(sourcePath || "");
+      const normalizedPattern = normalizeExcludePattern(pattern);
+      if (!source || !normalizedPattern) return normalizedPattern;
+      const suffix = normalizedPattern.includes("/")
+        ? normalizedPattern
+        : `**/${normalizedPattern}`;
+      return source === "/" ? `/${suffix}` : `${source}/${suffix}`;
+    }
+
+    function watcherJobExcludeRows(job) {
+      if (!job || !job.source_path) return [];
+      const options = job.options || {};
+      const rows = [];
+      const seen = new Set();
+      const addRow = (kind, pattern) => {
+        const normalizedPattern = normalizeExcludePattern(pattern);
+        if (!normalizedPattern) return;
+        const fullPath = watcherExcludeDisplayPath(job.source_path, normalizedPattern);
+        const key = `${kind}:${fullPath}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        rows.push({ kind, full_path: fullPath });
+      };
+      (Array.isArray(options.exclude) ? options.exclude : []).forEach((pattern) => addRow("МАСКА", pattern));
+      buildExcludePathPatterns(job.source_path, options.exclude_paths || []).forEach((pattern) => addRow("ПУТЬ", pattern));
+      return rows;
+    }
+
+    function renderWatcherJobDetails(details, selectedItem) {
+      if (!details) return;
+      if (!selectedItem) {
+        details.innerHTML = "";
+        return;
+      }
+      const job = state.jobs.find((item) => item.key === selectedItem.job_key);
+      if (!job) {
+        details.innerHTML = `
+          <article class="subpanel watcher-exclude-details">
+            <div class="eyebrow">Исключения watcher</div>
+            <div class="empty">Конфигурация выбранной watcher-задачи не найдена.</div>
+          </article>
+        `;
+        return;
+      }
+      const rows = watcherJobExcludeRows(job);
+      const title = job.display_title || job.title || job.description || job.key;
+      details.innerHTML = `
+        <article class="subpanel watcher-exclude-details">
+          <div class="panel-header" style="margin-bottom:10px;">
+            <div>
+              <div class="eyebrow">Исключения watcher</div>
+              <h3>${escapeHtml(title)}</h3>
+              <div class="field-meta">Источник: ${escapeHtml(job.source_path || selectedItem.path || "")}</div>
+            </div>
+          </div>
+          <div class="field-meta">Показано, какие пути получаются из exclude patterns и выбранных path-исключений относительно исходного каталога.</div>
+          <div class="exclude-path-list">
+            ${rows.length ? rows.map((row) => `
+              <div class="exclude-path-item">
+                <div class="exclude-path-kind">${escapeHtml(row.kind)}</div>
+                <div class="exclude-path-value" title="${escapeHtml(row.full_path)}">${escapeHtml(row.full_path)}</div>
+              </div>
+            `).join("") : '<div class="exclude-path-item empty">Для этой watcher-задачи исключения не настроены.</div>'}
+          </div>
+        </article>
+      `;
+    }
+
+    function selectWatcherJobCard(jobKey) {
+      state.selectedWatcherJobKey = state.selectedWatcherJobKey === jobKey ? null : jobKey;
+      renderWatcherPanel();
+    }
+
     function renderWatcherPanel() {
       const panel = document.getElementById("watcherPanel");
       const toggle = document.getElementById("watcherToggle");
       const summary = document.getElementById("watcherRuntimeSummary");
       const jobsList = document.getElementById("watcherJobsList");
-      if (!panel || !toggle || !summary || !jobsList) return;
+      const details = document.getElementById("watcherJobDetails");
+      if (!panel || !toggle || !summary || !jobsList || !details) return;
 
       panel.hidden = !state.showWatcher;
       toggle.classList.toggle("is-active", state.showWatcher);
@@ -3440,6 +3539,10 @@
       const observerRunning = Boolean(runtime.observer_running);
       const componentRunning = Boolean(runtime.component_running);
       const runtimeError = String(runtime.last_error || "").trim();
+      const selectedItem = items.find((item) => item.job_key === state.selectedWatcherJobKey) || null;
+      if (state.selectedWatcherJobKey && !selectedItem) {
+        state.selectedWatcherJobKey = null;
+      }
 
       summary.textContent = state.watcher?.enabled
         ? (observerRunning
@@ -3455,7 +3558,7 @@
         jobsList.innerHTML = '<div class="empty">Ни у одной backup-задачи пока не включено наблюдение за исходным каталогом.</div>';
       } else {
         jobsList.innerHTML = items.map((item) => `
-          <article class="job-card cloud-card ${item.active ? "" : "disabled"}">
+          <article class="job-card cloud-card clickable ${item.active ? "" : "disabled"} ${item.job_key === state.selectedWatcherJobKey ? "selected" : ""}" onclick="selectWatcherJobCard('${escapeHtml(escapeJsString(item.job_key || ""))}')">
             <div class="job-top">
               <div>
                 <div class="job-title">${escapeHtml(item.title || item.job_key || "job")}</div>
@@ -3470,6 +3573,7 @@
           </article>
         `).join("");
       }
+      renderWatcherJobDetails(details, selectedItem);
 
       renderHeroStatusIndicators();
       updateRunsLayout();
@@ -3529,6 +3633,7 @@
       if (normalized === "global") return "постоянный";
       if (normalized === "auto") return "авто";
       if (normalized === "debug") return "диагностика";
+      if (normalized === "job") return "задача";
       return "—";
     }
 
@@ -4189,6 +4294,14 @@
         .replaceAll('"', "&quot;");
     }
 
+    function escapeJsString(value) {
+      return String(value || "")
+        .replaceAll("\\", "\\\\")
+        .replaceAll("'", "\\'")
+        .replaceAll("\r", "\\r")
+        .replaceAll("\n", "\\n");
+    }
+
     function formValue(id) {
       return document.getElementById(id).value.trim();
     }
@@ -4345,6 +4458,7 @@
         no_traverse: isTogglePressed("jobNoTraverse"),
         debug_dump: normalizeDebugDump(document.getElementById("jobDebugDump").value),
         mailru_safe_preset: isTogglePressed("jobMailruSafePreset"),
+        force_rclone_log: isTogglePressed("jobForceRcloneLog"),
         exclude: formValue("excludeList").split("\n").map((item) => item.trim()).filter(Boolean),
         exclude_paths: state.excludePathEntries.map((entry) => ({ ...entry })),
         extra_args: formValue("extraArgs").split("\n").map((item) => item.trim()).filter(Boolean),
@@ -4390,6 +4504,7 @@
       setTogglePressed("jobMailruSafePreset", options.mailru_safe_preset ?? false);
       setTogglePressed("jobFastList", options.fast_list ?? false);
       setTogglePressed("jobNoTraverse", options.no_traverse ?? false);
+      setTogglePressed("jobForceRcloneLog", options.force_rclone_log ?? false);
       document.getElementById("excludeList").value = (options.exclude || []).join("\n");
       state.excludePathEntries = Array.isArray(options.exclude_paths)
         ? options.exclude_paths.map((entry) => normalizeExcludePathEntry(entry)).filter(Boolean)
@@ -5050,6 +5165,43 @@
       }
     }
 
+    function selectedRcloneLogIsActive(snapshot = state.lastSnapshot) {
+      const selectedStepId = Number(state.selectedRcloneLogStepId);
+      if (!Number.isFinite(selectedStepId) || selectedStepId <= 0 || !snapshot) return false;
+      const activeItems = [
+        ...(Array.isArray(snapshot.copy_progress) ? snapshot.copy_progress : []),
+        ...(Array.isArray(snapshot.active_operations) ? snapshot.active_operations : []),
+      ];
+      return activeItems.some((item) => {
+        const itemStepId = Number(item?.step_id);
+        const status = String(item?.status || "").toLowerCase();
+        return itemStepId === selectedStepId && ["queued", "running", "paused"].includes(status);
+      });
+    }
+
+    function rerenderCopyProgressFromSnapshot() {
+      if (!state.lastSnapshot) return;
+      renderCopyProgress(state.lastSnapshot.copy_progress || [], state.lastSnapshot.active_operations || []);
+    }
+
+    async function refreshSelectedRcloneLogDetail({ silent = false } = {}) {
+      const selectedStepId = Number(state.selectedRcloneLogStepId);
+      if (!Number.isFinite(selectedStepId) || selectedStepId <= 0) return;
+      try {
+        const response = await fetch(`/api/logging/rclone-files/${selectedStepId}`);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || "log tail failed");
+        state.selectedRcloneLogDetail = payload;
+        renderLoggingPanel();
+        rerenderCopyProgressFromSnapshot();
+      } catch (error) {
+        if (!silent) {
+          setToast(error.message || "Ошибка чтения лога", "error");
+        }
+        throw error;
+      }
+    }
+
     async function openRcloneLog(stepId, { openPanel = true, loadList = true } = {}) {
       try {
         if (openPanel) {
@@ -5070,6 +5222,7 @@
         if (!response.ok) throw new Error(payload.detail || "log tail failed");
         state.selectedRcloneLogDetail = payload;
         renderLoggingPanel();
+        rerenderCopyProgressFromSnapshot();
         if (openPanel) {
           document.getElementById("loggingPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
         }
@@ -5518,7 +5671,14 @@
         refreshStatisticsSummary({ silent: true }).catch(() => {});
       }
       if (state.showLogging) {
-        refreshRcloneLogs({ silent: true }).catch(() => {});
+        refreshRcloneLogs({ silent: true })
+          .then(() => {
+            if (selectedRcloneLogIsActive(snapshot)) {
+              return refreshSelectedRcloneLogDetail({ silent: true });
+            }
+            return null;
+          })
+          .catch(() => {});
       }
       renderWatcherPanel();
       updateServiceMessage(snapshot);
@@ -5622,7 +5782,7 @@
       updateLoggingPanelHeight();
     });
 
-    ["retentionEnabled", "jobNotifySuccess", "jobNotifyFailure", "jobWatcherEnabled", "jobMailruSafePreset", "jobFastList", "jobNoTraverse", "retentionMailruSafePreset", "retentionFastList", "retentionNoTraverse"].forEach((id) => {
+    ["retentionEnabled", "jobNotifySuccess", "jobNotifyFailure", "jobWatcherEnabled", "jobMailruSafePreset", "jobFastList", "jobNoTraverse", "jobForceRcloneLog", "retentionMailruSafePreset", "retentionFastList", "retentionNoTraverse"].forEach((id) => {
       bindToggleChip(id, () => collectFormJob());
     });
 

@@ -16,6 +16,7 @@ from .domain import (
     RunStepDefinition,
     apply_rclone_bwlimit,
     effective_bwlimit,
+    path_is_excluded_from_backup,
     path_is_within,
 )
 from .gotify import GotifyClient
@@ -425,7 +426,16 @@ class Orchestrator:
         for job in self.catalog.raw_jobs():
             if job.kind != "backup" or not job.enabled or not job.watcher_enabled or not job.source_path:
                 continue
-            if any(path_is_within(job.source_path, candidate) for candidate in candidate_paths if candidate):
+            if any(
+                path_is_within(job.source_path, candidate)
+                and not path_is_excluded_from_backup(
+                    source_path=job.source_path,
+                    target_path=candidate,
+                    options=job.options,
+                )
+                for candidate in candidate_paths
+                if candidate
+            ):
                 matched.append(job)
         matched.sort(key=lambda item: (item.order, item.key))
         return matched
@@ -745,6 +755,8 @@ class Orchestrator:
         step_options = self._step_options(step)
         if step_options and getattr(step_options, "debug_dump", None):
             return "debug"
+        if step_options and getattr(step_options, "force_rclone_log", False):
+            return "job"
         if not self.catalog.logging.auto_rclone_log_enabled:
             return None
         normalized_key = str(step.get("job_key") or "").strip()
