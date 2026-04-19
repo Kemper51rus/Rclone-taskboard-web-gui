@@ -29,6 +29,34 @@ bash <(curl -Ls https://raw.githubusercontent.com/Kemper51rus/Rclone-taskboard/m
 
 ---
 
+## 🏠 Homepage widget
+
+Для Homepage/customapi используйте лёгкий endpoint `GET /api/homepage`, а не полный `/api/state`.
+Скорость, открытые запуски и очереди обновляются на каждый запрос, поэтому при `refreshInterval: 500` скорость будет почти real-time.
+Размер БД, WAL и количество задач кэшируются на стороне taskboard на `slow_cache_seconds`, чтобы частый polling не нагружал SQLite-диагностику.
+
+Пример:
+
+```yaml
+widget:
+  type: customapi
+  url: http://100.100.0.243:8080/api/homepage
+  refreshInterval: 5000
+  mappings:
+    - field: total_copy_speed_megabits_per_second
+      label: Speed
+      format: float
+      suffix: " Mbps"
+    - field: open_runs_total
+      label: Open Runs
+      format: number
+    - field: database_total_size_bytes
+      label: DB
+      format: bytes
+```
+
+---
+
 ## 📘 Документация
 
 - [Обзор проекта](docs/01-overview.md)
