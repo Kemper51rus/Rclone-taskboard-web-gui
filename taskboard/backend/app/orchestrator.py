@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 import queue
 import threading
+from types import SimpleNamespace
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -778,7 +779,15 @@ class Orchestrator:
         if not job_key:
             return None
         job = self.catalog.get_job(job_key)
-        if not job or job.kind != "backup":
+        if not job:
+            return None
+        if job.kind == "command":
+            command = step.get("command") or []
+            if command and str(command[0]).strip() == "rclone":
+                options = job.options.normalized()
+                return SimpleNamespace(debug_dump=None, force_rclone_log=options.force_rclone_log)
+            return None
+        if job.kind != "backup":
             return None
         if step.get("step_kind") == "retention":
             return job.retention.normalized()

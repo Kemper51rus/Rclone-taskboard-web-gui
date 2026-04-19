@@ -166,6 +166,9 @@ def job_to_storage_dict(job: JobDefinition) -> dict[str, Any]:
         item["retention"] = normalized.retention.to_dict()
     else:
         item["command"] = normalized.command
+        command_options = normalized.options.normalized()
+        if command_options.force_rclone_log:
+            item["options"] = {"force_rclone_log": True}
     return item
 
 
@@ -254,6 +257,7 @@ def _load_job(
         profile=profile,
         schedule=_load_schedule(raw.get("schedule"), profile, standard_interval_minutes, heavy_hour),
         command=command,
+        options=_load_command_options(raw.get("options")),
         notifications=_load_notifications(raw.get("notifications")),
     ).validate()
 
@@ -483,6 +487,12 @@ def _extract_backup_fields(raw: dict[str, Any]) -> tuple[str, str, str, BackupOp
             extra_args=list(raw_options.get("extra_args", [])),
         )
     return source_path, destination_path, transfer_mode, options.normalized()
+
+
+def _load_command_options(raw_options: Any) -> BackupOptions:
+    if not isinstance(raw_options, dict):
+        return BackupOptions()
+    return BackupOptions(force_rclone_log=bool(raw_options.get("force_rclone_log", False))).normalized()
 
 
 def _extract_options_from_command(args: list[str]) -> BackupOptions:

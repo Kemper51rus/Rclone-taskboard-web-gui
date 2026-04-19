@@ -1263,6 +1263,7 @@ def update_jobs(payload: JobCatalogPayload) -> dict[str, Any]:
                 JobDefinition(
                     **common_kwargs,
                     command=[part for part in item.command if str(part).strip()],
+                    options=BackupOptions(force_rclone_log=item.options.force_rclone_log),
                 ).validate()
             )
         else:
