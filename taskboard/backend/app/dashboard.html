@@ -4820,7 +4820,10 @@
       collectFormJob();
     }
 
-    function collectJobRcloneOptions() {
+    function collectJobRcloneOptions(kind = selectedJobKind()) {
+      const forceRcloneLog = kind === "command"
+        ? isTogglePressed("commandForceRcloneLog")
+        : isTogglePressed("jobForceRcloneLog");
       return {
         max_age: formValue("maxAge") || null,
         min_age: formValue("minAge") || null,
@@ -4835,7 +4838,7 @@
         no_traverse: isTogglePressed("jobNoTraverse"),
         debug_dump: normalizeDebugDump(document.getElementById("jobDebugDump").value),
         mailru_safe_preset: isTogglePressed("jobMailruSafePreset"),
-        force_rclone_log: isTogglePressed("jobForceRcloneLog") || isTogglePressed("commandForceRcloneLog"),
+        force_rclone_log: forceRcloneLog,
         exclude: formValue("excludeList").split("\n").map((item) => item.trim()).filter(Boolean),
         exclude_paths: state.excludePathEntries.map((entry) => ({ ...entry })),
         extra_args: formValue("extraArgs").split("\n").map((item) => item.trim()).filter(Boolean),
@@ -5160,7 +5163,7 @@
           minute: Number(document.getElementById("scheduleMinute").value || 0),
           weekdays: checkedWeekdays(),
         },
-        options: collectJobRcloneOptions(),
+        options: collectJobRcloneOptions(kind),
         retention: collectRetentionRcloneOptions(kind),
         notifications: {
           on_success: isTogglePressed("jobNotifySuccess"),
